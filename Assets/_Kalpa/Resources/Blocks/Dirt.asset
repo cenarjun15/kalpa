@@ -16,7 +16,8 @@ MonoBehaviour:
   internalName: kalpa:dirt
   displayName: Dirt
   category: 1
-  debugColor: {r: 0.5882353, g: 0.29411766, b: 0, a: 1}
+  texture: {fileID: 2800000, guid: 7bf4d15352769074ca0d6909362c065c, type: 3}
+  debugColor: {r: 1, g: 1, b: 1, a: 1}
   isSolid: 1
   isTransparent: 0
   hardness: 1

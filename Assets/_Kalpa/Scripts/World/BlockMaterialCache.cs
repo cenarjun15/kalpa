@@ -1,72 +1,64 @@
 // ============================================================================
-// BlockMaterialCache.cs
+// BlockMaterialCache.cs  (Phase 5A update — atlas support)
 // ----------------------------------------------------------------------------
-// Creates and caches one Material per block type, coloured by BlockData.debugColor.
-// Uses URP/Lit if the URP is active, otherwise falls back to Standard.
-// Phase 3+ will swap this out for a texture-atlas based system.
+// Now provides ONE shared material for ALL block types, textured with the atlas.
+// Chunks use a single material + submesh-per-block-type — but because every
+// submesh points at the same atlas, the renderer batches them into one draw
+// call. This is the key perf win of Phase 5A.
 // ============================================================================
 
-using System.Collections.Generic;
 using Kalpa.Blocks;
 using UnityEngine;
 
 namespace Kalpa.World
 {
     /// <summary>
-    /// Provides a cached Material for each registered block type.
-    /// One material per block = allows submesh-based rendering per chunk.
+    /// Provides materials for chunk rendering. Now atlas-based rather than one
+    /// material per block type.
     /// </summary>
     public sealed class BlockMaterialCache
     {
-        private readonly Dictionary<byte, Material> byId = new Dictionary<byte, Material>();
         private readonly Shader shader;
+
+        /// <summary>The atlas-textured material used by every chunk mesh.</summary>
+        public Material AtlasMaterial { get; private set; }
 
         public BlockMaterialCache()
         {
-            // Try URP Lit → URP Simple Lit → Standard.
             shader = Shader.Find("Universal Render Pipeline/Lit")
                   ?? Shader.Find("Universal Render Pipeline/Simple Lit")
                   ?? Shader.Find("Standard");
 
             if (shader == null)
-            {
                 Debug.LogError("[BlockMaterialCache] No usable shader found!");
-            }
             else
-            {
                 Debug.Log($"[BlockMaterialCache] Using shader: {shader.name}");
-            }
         }
 
         /// <summary>
-        /// Get (or create + cache) the material for a given block type.
+        /// Build the single atlas material. Call once, after the atlas has been baked.
         /// </summary>
-        public Material GetMaterial(BlockData data)
+        public void BuildAtlasMaterial(Texture2D atlasTexture)
         {
-            if (data == null) return null;
+            AtlasMaterial = new Material(shader) { name = "BlockAtlasMaterial" };
 
-            if (byId.TryGetValue(data.Id, out var existing))
-                return existing;
+            if (AtlasMaterial.HasProperty("_BaseMap"))
+                AtlasMaterial.SetTexture("_BaseMap", atlasTexture);
+            if (AtlasMaterial.HasProperty("_MainTex"))
+                AtlasMaterial.SetTexture("_MainTex", atlasTexture);
 
-            var mat = new Material(shader)
-            {
-                name = $"Block_{data.InternalName}"
-            };
+            if (AtlasMaterial.HasProperty("_BaseColor"))
+                AtlasMaterial.SetColor("_BaseColor", Color.white);
+            if (AtlasMaterial.HasProperty("_Color"))
+                AtlasMaterial.SetColor("_Color", Color.white);
 
-            // Set colour using whichever property the active shader exposes.
-            var color = data.DebugColor;
-            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", color);
-            if (mat.HasProperty("_Color"))     mat.SetColor("_Color", color);
-
-            // Nicer defaults for a voxel game.
-            if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.05f);
-            if (mat.HasProperty("_Metallic"))   mat.SetFloat("_Metallic", 0f);
-
-            byId[data.Id] = mat;
-            return mat;
+            if (AtlasMaterial.HasProperty("_Smoothness"))
+                AtlasMaterial.SetFloat("_Smoothness", 0.05f);
+            if (AtlasMaterial.HasProperty("_Metallic"))
+                AtlasMaterial.SetFloat("_Metallic", 0f);
         }
 
-        /// <summary>Cached count. Handy for diagnostics.</summary>
-        public int Count => byId.Count;
+        /// <summary>Backwards-compat: some old code may still ask for a per-block material.</summary>
+        public Material GetMaterial(BlockData data) => AtlasMaterial;
     }
 }

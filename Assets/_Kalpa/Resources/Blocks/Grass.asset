@@ -16,7 +16,8 @@ MonoBehaviour:
   internalName: kalpa:grass
   displayName: Grass
   category: 1
-  debugColor: {r: 0.13333334, g: 0.54509807, b: 0.13333334, a: 1}
+  texture: {fileID: 2800000, guid: eff1f94c1bc222544a03e61f544bfd05, type: 3}
+  debugColor: {r: 1, g: 1, b: 1, a: 1}
   isSolid: 1
   isTransparent: 0
   hardness: 1

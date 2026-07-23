@@ -1,35 +1,33 @@
 // ============================================================================
-// ChunkMeshBuilder.cs
+// ChunkMeshBuilder.cs  (Phase 5A update — atlas UVs)
 // ----------------------------------------------------------------------------
-// Turns a Chunk into a Unity Mesh with:
-//   * Face culling — a face is emitted only if its neighbour is air/transparent.
-//   * Submeshes per block type — one material per submesh, so each block gets
-//     its own colour without needing per-vertex colours or texture atlases.
+// Now:
+//   * All triangles go into ONE submesh (no per-block-type submeshing).
+//   * UVs are sampled from BlockTextureAtlas — each face's 4 UVs point at the
+//     block's tile in the atlas.
+// One material + one submesh = one draw call per chunk. Massive perf win.
 // ============================================================================
 
 using System.Collections.Generic;
 using Kalpa.Blocks;
 using Kalpa.Core;
-using Kalpa.Utils;
 using UnityEngine;
 
 namespace Kalpa.World
 {
-    /// <summary>Result of a mesh build. Apply to a Unity Mesh via <see cref="ApplyTo"/>.</summary>
+    /// <summary>Result of a mesh build.</summary>
     public struct ChunkMeshData
     {
         public Vector3[] Vertices;
         public Vector3[] Normals;
         public Vector2[] UVs;
-        public int[][] SubmeshTriangles; // one int[] per submesh
-        public byte[] SubmeshBlockIds;   // parallel to SubmeshTriangles — the block ID that submesh represents
+        public int[]     Triangles; // single submesh now
 
         public void ApplyTo(Mesh mesh)
         {
             mesh.Clear();
             if (Vertices == null || Vertices.Length == 0) return;
 
-            // Use 32-bit indices for chunks with many faces.
             mesh.indexFormat = Vertices.Length > 65000
                 ? UnityEngine.Rendering.IndexFormat.UInt32
                 : UnityEngine.Rendering.IndexFormat.UInt16;
@@ -37,10 +35,8 @@ namespace Kalpa.World
             mesh.SetVertices(Vertices);
             mesh.SetNormals(Normals);
             mesh.SetUVs(0, UVs);
-            mesh.subMeshCount = SubmeshTriangles.Length;
-            for (int i = 0; i < SubmeshTriangles.Length; i++)
-                mesh.SetTriangles(SubmeshTriangles[i], i);
-
+            mesh.subMeshCount = 1;
+            mesh.SetTriangles(Triangles, 0);
             mesh.RecalculateBounds();
         }
     }
@@ -57,23 +53,20 @@ namespace Kalpa.World
         private const int Size = GameConstants.ChunkSize;
         private const int Height = GameConstants.ChunkHeight;
 
-        // The 6 face directions.
+        // Face directions.
         private enum Face { Right = 0, Left = 1, Top = 2, Bottom = 3, Forward = 4, Back = 5 }
 
-        // Offsets to the neighbour block for each face.
         private static readonly (int dx, int dy, int dz)[] FaceOffsets = new (int, int, int)[]
         {
-            ( 1,  0,  0), // Right  (+X)
-            (-1,  0,  0), // Left   (-X)
-            ( 0,  1,  0), // Top    (+Y)
-            ( 0, -1,  0), // Bottom (-Y)
-            ( 0,  0,  1), // Forward(+Z)
-            ( 0,  0, -1), // Back   (-Z)
+            ( 1,  0,  0), // Right
+            (-1,  0,  0), // Left
+            ( 0,  1,  0), // Top
+            ( 0, -1,  0), // Bottom
+            ( 0,  0,  1), // Forward
+            ( 0,  0, -1), // Back
         };
 
-        // The 4 corner vertices of each face (in local block space, block at 0,0,0
-        // occupies the cube from (0,0,0) to (1,1,1)). Wound counter-clockwise
-        // when viewed from OUTSIDE the block so normals point outward.
+        // Vertices per face, counter-clockwise viewed from outside.
         private static readonly Vector3[,] FaceVertices = new Vector3[6, 4]
         {
             // Right (+X)
@@ -95,43 +88,37 @@ namespace Kalpa.World
             Vector3.right, Vector3.left, Vector3.up, Vector3.down, Vector3.forward, Vector3.back
         };
 
+        // UV corner ORDER, in the same winding as FaceVertices (0,0)->(0,1)->(1,1)->(1,0)
+        // is mapped to whichever atlas rect a block occupies.
         private static readonly Vector2[] FaceUVs = new Vector2[4]
         {
-            new Vector2(0,0), new Vector2(0,1), new Vector2(1,1), new Vector2(1,0)
+            new Vector2(0, 0), new Vector2(0, 1), new Vector2(1, 1), new Vector2(1, 0)
         };
 
         // --------------------------------------------------------------------
-        // Reusable buffers (kept between builds to reduce GC pressure)
+        // Reusable buffers
         // --------------------------------------------------------------------
 
-        private readonly List<Vector3> vertices = new List<Vector3>(4096);
-        private readonly List<Vector3> normals  = new List<Vector3>(4096);
-        private readonly List<Vector2> uvs      = new List<Vector2>(4096);
-
-        // block ID → triangle-index list for that submesh
-        private readonly Dictionary<byte, List<int>> triangleLists = new Dictionary<byte, List<int>>();
+        private readonly List<Vector3> vertices  = new List<Vector3>(4096);
+        private readonly List<Vector3> normals   = new List<Vector3>(4096);
+        private readonly List<Vector2> uvs       = new List<Vector2>(4096);
+        private readonly List<int>     triangles = new List<int>(6144);
 
         // --------------------------------------------------------------------
         // Build
         // --------------------------------------------------------------------
 
-        /// <summary>
-        /// Build mesh data for a chunk.
-        /// Reads neighbour blocks from <paramref name="world"/> so cross-chunk borders
-        /// are culled correctly against adjacent loaded chunks.
-        /// </summary>
-        public ChunkMeshData Build(Chunk chunk, VoxelWorld world, BlockRegistry registry)
+        public ChunkMeshData Build(Chunk chunk, VoxelWorld world,
+                                   BlockRegistry registry, BlockTextureAtlas atlas)
         {
-            // Clear buffers for reuse.
             vertices.Clear();
             normals.Clear();
             uvs.Clear();
-            foreach (var list in triangleLists.Values) list.Clear();
+            triangles.Clear();
 
             int originX = chunk.Coordinate.WorldOriginX;
             int originZ = chunk.Coordinate.WorldOriginZ;
 
-            // Iterate every block in the chunk.
             for (int y = 0; y < Height; y++)
             for (int z = 0; z < Size; z++)
             for (int x = 0; x < Size; x++)
@@ -145,25 +132,33 @@ namespace Kalpa.World
                 int worldX = originX + x;
                 int worldZ = originZ + z;
 
-                // Check each of the 6 faces.
+                var uvRect = atlas.GetUV(id);
+
                 for (int f = 0; f < 6; f++)
                 {
                     var (dx, dy, dz) = FaceOffsets[f];
-                    byte neighbourId = GetBlockForCulling(chunk, world, x + dx, y + dy, z + dz,
+                    byte neighbourId = GetBlockForCulling(chunk, world,
+                                                         x + dx, y + dy, z + dz,
                                                          worldX + dx, worldZ + dz);
 
                     if (ShouldRenderFace(neighbourId, registry))
                     {
-                        AddFace(x, y, z, f, id);
+                        AddFace(x, y, z, f, uvRect);
                     }
                 }
             }
 
-            return Finalise();
+            return new ChunkMeshData
+            {
+                Vertices  = vertices.ToArray(),
+                Normals   = normals.ToArray(),
+                UVs       = uvs.ToArray(),
+                Triangles = triangles.ToArray(),
+            };
         }
 
         // --------------------------------------------------------------------
-        // Neighbour lookup — prefer local chunk (fast path), fall back to world.
+        // Neighbour lookup
         // --------------------------------------------------------------------
 
         private static byte GetBlockForCulling(Chunk chunk, VoxelWorld world,
@@ -183,10 +178,10 @@ namespace Kalpa.World
         }
 
         // --------------------------------------------------------------------
-        // Face emission
+        // Face emission — writes 4 verts + 6 triangle indices, with atlas UVs.
         // --------------------------------------------------------------------
 
-        private void AddFace(int x, int y, int z, int faceIndex, byte blockId)
+        private void AddFace(int x, int y, int z, int faceIndex, Rect uvRect)
         {
             var origin = new Vector3(x, y, z);
             var normal = FaceNormals[faceIndex];
@@ -197,55 +192,20 @@ namespace Kalpa.World
             {
                 vertices.Add(FaceVertices[faceIndex, i] + origin);
                 normals.Add(normal);
-                uvs.Add(FaceUVs[i]);
+
+                // Map the face's corner UV (0/1 in each axis) into the atlas rect.
+                var localUV = FaceUVs[i];
+                uvs.Add(new Vector2(
+                    uvRect.xMin + localUV.x * uvRect.width,
+                    uvRect.yMin + localUV.y * uvRect.height));
             }
 
-            var tris = GetTriangleList(blockId);
-            tris.Add(start);
-            tris.Add(start + 1);
-            tris.Add(start + 2);
-            tris.Add(start);
-            tris.Add(start + 2);
-            tris.Add(start + 3);
-        }
-
-        private List<int> GetTriangleList(byte blockId)
-        {
-            if (!triangleLists.TryGetValue(blockId, out var list))
-            {
-                list = new List<int>(1024);
-                triangleLists[blockId] = list;
-            }
-            return list;
-        }
-
-        // --------------------------------------------------------------------
-        // Package result
-        // --------------------------------------------------------------------
-
-        private ChunkMeshData Finalise()
-        {
-            // Collect submeshes that actually had triangles this build.
-            var activeIds = new List<byte>(triangleLists.Count);
-            foreach (var kv in triangleLists)
-                if (kv.Value.Count > 0) activeIds.Add(kv.Key);
-
-            var submeshTris = new int[activeIds.Count][];
-            var submeshIds  = new byte[activeIds.Count];
-            for (int i = 0; i < activeIds.Count; i++)
-            {
-                submeshIds[i]  = activeIds[i];
-                submeshTris[i] = triangleLists[activeIds[i]].ToArray();
-            }
-
-            return new ChunkMeshData
-            {
-                Vertices          = vertices.ToArray(),
-                Normals           = normals.ToArray(),
-                UVs               = uvs.ToArray(),
-                SubmeshTriangles  = submeshTris,
-                SubmeshBlockIds   = submeshIds,
-            };
+            triangles.Add(start);
+            triangles.Add(start + 1);
+            triangles.Add(start + 2);
+            triangles.Add(start);
+            triangles.Add(start + 2);
+            triangles.Add(start + 3);
         }
     }
 }

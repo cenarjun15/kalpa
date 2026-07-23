@@ -16,7 +16,8 @@ MonoBehaviour:
   internalName: kalpa:marble
   displayName: Marble
   category: 6
-  debugColor: {r: 0.84705883, g: 0.87058824, b: 0.9254902, a: 1}
+  texture: {fileID: 2800000, guid: b652e283624ec0844a5a14bdae4c68e1, type: 3}
+  debugColor: {r: 1, g: 1, b: 1, a: 1}
   isSolid: 1
   isTransparent: 0
   hardness: 1

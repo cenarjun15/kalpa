@@ -16,7 +16,8 @@ MonoBehaviour:
   internalName: kalpa:stone
   displayName: Stone
   category: 2
-  debugColor: {r: 0.5019608, g: 0.5019608, b: 0.5019608, a: 1}
+  texture: {fileID: 2800000, guid: f739405600c5b5f45a8b2991ce7ae612, type: 3}
+  debugColor: {r: 1, g: 1, b: 1, a: 1}
   isSolid: 1
   isTransparent: 0
   hardness: 1

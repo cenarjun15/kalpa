@@ -1,9 +1,11 @@
 // ============================================================================
-// GameManager.cs  (Phase 2 update)
+// GameManager.cs  (Phase 5A update — atlas support)
 // ----------------------------------------------------------------------------
-// Now owns BlockMaterialCache in addition to BlockRegistry and VoxelWorld.
-// The Phase 1 diagnostic block-log listener has been removed — you'll see the
-// world visually now.
+// Now also owns BlockTextureAtlas. Boot order matters:
+//   1. BlockRegistry loads BlockData assets (with their textures).
+//   2. VoxelWorld created.
+//   3. BlockTextureAtlas built from registry.
+//   4. BlockMaterialCache builds an atlas-material using the atlas texture.
 // ============================================================================
 
 using Kalpa.Blocks;
@@ -13,13 +15,13 @@ using UnityEngine;
 namespace Kalpa.Core
 {
     /// <summary>
-    /// Top-level game controller. Placed once in the MainScene.
+    /// Top-level game controller. Placed once per gameplay scene.
     /// </summary>
     [DefaultExecutionOrder(-1000)]
     public sealed class GameManager : MonoBehaviour
     {
         // --------------------------------------------------------------------
-        // Singleton access
+        // Singleton
         // --------------------------------------------------------------------
 
         public static GameManager Instance { get; private set; }
@@ -28,16 +30,16 @@ namespace Kalpa.Core
         // Systems
         // --------------------------------------------------------------------
 
-        public BlockRegistry     BlockRegistry { get; private set; }
-        public VoxelWorld        World         { get; private set; }
+        public BlockRegistry      BlockRegistry { get; private set; }
+        public VoxelWorld         World         { get; private set; }
         public BlockMaterialCache MaterialCache { get; private set; }
+        public BlockTextureAtlas  TextureAtlas  { get; private set; }
 
         // --------------------------------------------------------------------
-        // Inspector-configurable
+        // Inspector
         // --------------------------------------------------------------------
 
         [Header("Startup")]
-
         [SerializeField] private bool verboseLogging = true;
         [SerializeField] private bool dontDestroyOnLoad = true;
 
@@ -80,7 +82,12 @@ namespace Kalpa.Core
             World = new VoxelWorld(BlockRegistry);
             Log("VoxelWorld ready — empty.");
 
+            TextureAtlas = new BlockTextureAtlas();
+            TextureAtlas.Build(BlockRegistry);
+            Log("BlockTextureAtlas built.");
+
             MaterialCache = new BlockMaterialCache();
+            MaterialCache.BuildAtlasMaterial(TextureAtlas.Atlas);
             Log("BlockMaterialCache ready.");
 
             Log("Boot complete.");

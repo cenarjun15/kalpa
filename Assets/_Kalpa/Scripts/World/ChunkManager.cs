@@ -1,10 +1,7 @@
 // ============================================================================
-// ChunkManager.cs  (Phase 4A update — hotfix v2)
+// ChunkManager.cs  (Phase 5A update — passes atlas into ChunkRenderer)
 // ----------------------------------------------------------------------------
-// Now aware of WorldSession:
-//   * If a saved world exists on disk with WorldSession.WorldName, load it.
-//   * Otherwise, generate a fresh world using WorldSession.Seed.
-// Also spawns renderers for chunks that arrive later via VoxelWorld.ChunkAdded.
+// Same responsibilities as Phase 4A, plus: hands the atlas to each renderer.
 // ============================================================================
 
 using System.Collections;
@@ -20,27 +17,15 @@ namespace Kalpa.World
     {
         [Header("World Setup")]
 
-        [Tooltip("Half-extent of the initial world in chunks. " +
-                 "e.g. 3 → 7×7 chunk grid (from -3 to +3 on X and Z).")]
         [SerializeField, Range(1, 8)] private int worldRadiusChunks = 3;
-
-        [Tooltip("Seed used ONLY if no WorldSession is present in the scene.")]
         [SerializeField] private int fallbackSeed = 42;
-
-        [Tooltip("World name used ONLY if no WorldSession is present in the scene.")]
         [SerializeField] private string fallbackWorldName = "MyWorld";
 
-        // Reusable mesh builder — one is enough for the whole scene.
         private readonly ChunkMeshBuilder meshBuilder = new ChunkMeshBuilder();
-
         private readonly Dictionary<ChunkCoordinate, ChunkRenderer> renderers
             = new Dictionary<ChunkCoordinate, ChunkRenderer>();
 
         private VoxelWorld world;
-
-        // --------------------------------------------------------------------
-        // Unity lifecycle
-        // --------------------------------------------------------------------
 
         private void Start()
         {
@@ -52,13 +37,8 @@ namespace Kalpa.World
             if (world != null) world.ChunkAdded -= OnChunkAdded;
         }
 
-        // --------------------------------------------------------------------
-        // Bootstrap
-        // --------------------------------------------------------------------
-
         private IEnumerator BootstrapWorld()
         {
-            // Wait one frame so GameManager.Awake and WorldSession.Awake have run.
             yield return null;
 
             var gm = GameManager.Instance;
@@ -76,7 +56,6 @@ namespace Kalpa.World
             world = gm.World;
             world.ChunkAdded += OnChunkAdded;
 
-            // Resolve session (create a default one if none exists).
             var session = WorldSession.Instance;
             string worldName;
             int seed;
@@ -93,7 +72,6 @@ namespace Kalpa.World
                 Debug.LogWarning("[ChunkManager] No WorldSession in scene; using inspector fallbacks.");
             }
 
-            // Decide load-vs-generate BEFORE any yield, so no yields are inside catch blocks.
             bool loadSucceeded = false;
             WorldSaveHeader loadedHeader = null;
 
@@ -136,10 +114,9 @@ namespace Kalpa.World
                 var coord = new ChunkCoordinate(cx, cz);
                 var chunk = new Chunk(coord);
                 terrain.Generate(chunk);
-                world.AddChunk(chunk); // triggers OnChunkAdded → renderer created
+                world.AddChunk(chunk);
             }
 
-            // Yield once so all renderers can rebuild without blocking the frame too long.
             yield return null;
 
             foreach (var kv in renderers) kv.Value.Rebuild();
@@ -152,7 +129,6 @@ namespace Kalpa.World
 
             pc.transform.position = new Vector3(header.PlayerX, header.PlayerY, header.PlayerZ);
 
-            // yaw goes on the body, pitch goes on the camera (child).
             var e = pc.transform.eulerAngles;
             pc.transform.eulerAngles = new Vector3(e.x, header.PlayerYaw, e.z);
 
@@ -164,10 +140,6 @@ namespace Kalpa.World
             }
         }
 
-        // --------------------------------------------------------------------
-        // Chunk registration
-        // --------------------------------------------------------------------
-
         private void OnChunkAdded(Chunk chunk)
         {
             if (renderers.ContainsKey(chunk.Coordinate)) return;
@@ -177,14 +149,11 @@ namespace Kalpa.World
 
             var renderer = go.AddComponent<ChunkRenderer>();
             var gm = GameManager.Instance;
-            renderer.Initialise(chunk, world, gm.BlockRegistry, gm.MaterialCache, meshBuilder);
+            renderer.Initialise(chunk, world, gm.BlockRegistry, gm.MaterialCache,
+                                meshBuilder, gm.TextureAtlas);
 
             renderers[chunk.Coordinate] = renderer;
         }
-
-        // --------------------------------------------------------------------
-        // Public helpers
-        // --------------------------------------------------------------------
 
         public ChunkRenderer GetRenderer(ChunkCoordinate coord)
             => renderers.TryGetValue(coord, out var r) ? r : null;

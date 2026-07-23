@@ -1,9 +1,9 @@
 // ============================================================================
-// BlockData.cs
+// BlockData.cs  (Phase 5A update — texture support)
 // ----------------------------------------------------------------------------
-// ScriptableObject describing a single block type.
-// One asset = one block type. Designers create these in the Unity editor,
-// no code changes required to add a new block later.
+// Adds a texture reference so each block type maps to one tile in the atlas.
+// Backward-compatible: DebugColor still exists as a fallback tint / for blocks
+// without a texture.
 // ============================================================================
 
 using UnityEngine;
@@ -44,7 +44,12 @@ namespace Kalpa.Blocks
 
         [Header("Appearance")]
 
-        [Tooltip("Placeholder tint used until textures are added in Phase 2.")]
+        [Tooltip("Texture used for all 6 faces of this block. " +
+                 "If null, DebugColor is used as a flat tint.")]
+        [SerializeField] private Texture2D texture;
+
+        [Tooltip("Tint applied on top of the texture (multiplied). " +
+                 "Also used as fallback if Texture is null.")]
         [SerializeField] private Color debugColor = Color.white;
 
         // --------------------------------------------------------------------
@@ -53,30 +58,26 @@ namespace Kalpa.Blocks
 
         [Header("Physics")]
 
-        [Tooltip("Whether player collides with this block.")]
         [SerializeField] private bool isSolid = true;
-
-        [Tooltip("Whether raycasts can see through it (used for face culling later).")]
         [SerializeField] private bool isTransparent = false;
-
-        [Tooltip("Hardness — how long it takes to break. 0 = instant.")]
         [SerializeField, Min(0f)] private float hardness = 1.0f;
 
         // --------------------------------------------------------------------
-        // Public accessors (read-only from outside)
+        // Public accessors
         // --------------------------------------------------------------------
 
         public byte Id => id;
         public string InternalName => internalName;
         public string DisplayName => displayName;
         public BlockCategory Category => category;
+        public Texture2D Texture => texture;
         public Color DebugColor => debugColor;
         public bool IsSolid => isSolid;
         public bool IsTransparent => isTransparent;
         public float Hardness => hardness;
 
         // --------------------------------------------------------------------
-        // Validation — runs whenever asset is edited in inspector
+        // Validation
         // --------------------------------------------------------------------
 
         private void OnValidate()
