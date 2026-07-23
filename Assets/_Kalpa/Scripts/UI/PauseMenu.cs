@@ -1,37 +1,29 @@
 // ============================================================================
-// PauseMenu.cs
+// PauseMenu.cs  (Phase 5B update — volume sliders)
 // ----------------------------------------------------------------------------
-// Press ESC (once) in-game to open a small pause menu.
-// Options: Resume, Save, Save & Quit to Menu, Quit to Desktop.
-//
-// Deliberately does NOT set Time.timeScale = 0 — physics still runs, so gravity
-// and animations are unaffected while the menu is open. The player controller
-// itself simply ignores input while the cursor is unlocked.
+// Adds Master/SFX/Ambient volume sliders. Values live in AudioSystem +
+// PlayerPrefs, so they persist across sessions.
 // ============================================================================
 
+using Kalpa.Audio;
 using Kalpa.SaveSystem;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
 namespace Kalpa.UI
 {
-    /// <summary>
-    /// In-game pause menu. Attach to any GameObject in the MainScene.
-    /// </summary>
     public sealed class PauseMenu : MonoBehaviour
     {
         [Header("Scene names (must match Build Settings)")]
         [SerializeField] private string mainMenuSceneName = "MainMenu";
 
         [Header("Layout")]
-        [SerializeField] private int panelWidth = 320;
-        [SerializeField] private int panelHeight = 300;
+        [SerializeField] private int panelWidth = 380;
+        [SerializeField] private int panelHeight = 460;
 
         private bool open;
 
-        // --------------------------------------------------------------------
-        // Input
-        // --------------------------------------------------------------------
+        public bool IsOpen => open;
 
         private void Update()
         {
@@ -48,27 +40,15 @@ namespace Kalpa.UI
             Cursor.visible = visible;
         }
 
-        // --------------------------------------------------------------------
-        // Public accessor — PlayerInput checks this to freeze input while open
-        // --------------------------------------------------------------------
-
-        public bool IsOpen => open;
-
-        // --------------------------------------------------------------------
-        // IMGUI
-        // --------------------------------------------------------------------
-
         private void OnGUI()
         {
             if (!open) return;
 
-            // Backdrop.
             var prev = GUI.color;
             GUI.color = new Color(0f, 0f, 0f, 0.55f);
             GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
             GUI.color = prev;
 
-            // Panel.
             var panel = new Rect(
                 (Screen.width - panelWidth) / 2,
                 (Screen.height - panelHeight) / 2,
@@ -88,25 +68,28 @@ namespace Kalpa.UI
                                        panel.width - 48, panel.height - 84);
             GUILayout.BeginArea(contentArea);
 
+            DrawVolumeSliders();
+            GUILayout.Space(12);
+
             if (GUILayout.Button("▶ Resume", GUILayout.Height(38)))
             {
                 open = false;
                 SetCursor(false);
             }
-            GUILayout.Space(8);
+            GUILayout.Space(6);
 
             if (GUILayout.Button("💾 Save", GUILayout.Height(38)))
             {
                 WorldSession.Instance?.SaveNow("pause menu");
             }
-            GUILayout.Space(8);
+            GUILayout.Space(6);
 
             if (GUILayout.Button("🏠 Save & Quit to Menu", GUILayout.Height(38)))
             {
                 WorldSession.Instance?.SaveNow("quit to menu");
                 LoadMainMenu();
             }
-            GUILayout.Space(8);
+            GUILayout.Space(6);
 
             if (GUILayout.Button("✖ Quit to Desktop", GUILayout.Height(38)))
             {
@@ -117,9 +100,35 @@ namespace Kalpa.UI
             GUILayout.EndArea();
         }
 
-        // --------------------------------------------------------------------
-        // Actions
-        // --------------------------------------------------------------------
+        private void DrawVolumeSliders()
+        {
+            var audio = AudioSystem.Instance;
+            if (audio == null) return;
+
+            var labelStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 12,
+                normal = { textColor = new Color(0.85f, 0.85f, 0.85f, 1f) },
+            };
+
+            float master = audio.MasterVolume;
+            float sfx = audio.SfxVolume;
+            float ambient = audio.AmbientVolume;
+
+            GUILayout.Label($"🔊 Master  ({Mathf.RoundToInt(master * 100)}%)", labelStyle);
+            float newMaster = GUILayout.HorizontalSlider(master, 0f, 1f);
+            if (!Mathf.Approximately(newMaster, master)) audio.SetMasterVolume(newMaster);
+
+            GUILayout.Space(4);
+            GUILayout.Label($"💥 SFX  ({Mathf.RoundToInt(sfx * 100)}%)", labelStyle);
+            float newSfx = GUILayout.HorizontalSlider(sfx, 0f, 1f);
+            if (!Mathf.Approximately(newSfx, sfx)) audio.SetSfxVolume(newSfx);
+
+            GUILayout.Space(4);
+            GUILayout.Label($"🌬 Ambient  ({Mathf.RoundToInt(ambient * 100)}%)", labelStyle);
+            float newAmbient = GUILayout.HorizontalSlider(ambient, 0f, 1f);
+            if (!Mathf.Approximately(newAmbient, ambient)) audio.SetAmbientVolume(newAmbient);
+        }
 
         private void LoadMainMenu()
         {

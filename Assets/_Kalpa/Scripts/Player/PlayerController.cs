@@ -1,18 +1,14 @@
 // ============================================================================
-// PlayerController.cs
+// PlayerController.cs  (Phase 5B update — audio hooks)
 // ----------------------------------------------------------------------------
-// Ties everything together for the player character.
-//
-// Responsibilities:
-//   * Read input (PlayerInput)
-//   * Apply movement + jump + physics (PlayerPhysics)
-//   * Aim the first-person camera (mouse look)
-//   * Cast rays into the world (VoxelRaycaster)
-//   * Break / place blocks and show the highlight
-//   * Track which block type is selected via the hotbar
+// Adds sound triggers:
+//   * Footsteps while walking on ground (rate scales with speed).
+//   * Jump sound when leaving the ground.
+//   * Break / place sounds when modifying the world.
 // ============================================================================
 
 using System.Collections.Generic;
+using Kalpa.Audio;
 using Kalpa.Blocks;
 using Kalpa.Core;
 using Kalpa.Utils;
@@ -32,10 +28,7 @@ namespace Kalpa.Player
         // --------------------------------------------------------------------
 
         [Header("References")]
-        [Tooltip("The first-person camera (usually a child of this GameObject).")]
         [SerializeField] private Camera playerCamera;
-
-        [Tooltip("Optional block highlight — created automatically if left null.")]
         [SerializeField] private BlockHighlight highlight;
 
         [Header("Look")]
@@ -46,11 +39,17 @@ namespace Kalpa.Player
         [SerializeField] private Vector3 spawnPosition = new Vector3(0f, 70f, 0f);
 
         [Header("Hotbar (auto-populated from BlockRegistry if empty)")]
-        [Tooltip("Internal block names that appear in the hotbar, in order.")]
         [SerializeField] private string[] hotbarBlocks =
         {
-            "kalpa:grass", "kalpa:dirt", "kalpa:stone", "kalpa:sandalwood"
+            "kalpa:grass", "kalpa:dirt", "kalpa:stone", "kalpa:sandalwood",
+            "kalpa:sand", "kalpa:marble"
         };
+
+        [Header("Footsteps")]
+        [Tooltip("Time between footstep sounds while walking.")]
+        [SerializeField, Range(0.15f, 0.8f)] private float stepIntervalWalk = 0.45f;
+        [Tooltip("Time between footstep sounds while sprinting.")]
+        [SerializeField, Range(0.15f, 0.8f)] private float stepIntervalSprint = 0.30f;
 
         // --------------------------------------------------------------------
         // State
@@ -61,14 +60,18 @@ namespace Kalpa.Player
         private VoxelRaycaster raycaster;
 
         private Vector3 velocity;
-        private float pitch;           // camera up/down angle
-        private float yaw;             // body left/right angle
+        private float pitch;
+        private float yaw;
 
         private byte[] hotbarBlockIds = new byte[0];
         private int selectedSlot;
 
+        // Audio state.
+        private float stepTimer;
+        private bool wasGrounded;
+
         // --------------------------------------------------------------------
-        // Public read-only accessors (used by HUD)
+        // Public accessors
         // --------------------------------------------------------------------
 
         public int SelectedSlot => selectedSlot;
@@ -96,7 +99,6 @@ namespace Kalpa.Player
             physics   = new PlayerPhysics(gm.World);
             raycaster = new VoxelRaycaster(gm.World);
 
-            // Auto-find the camera if not assigned.
             if (playerCamera == null)
             {
                 playerCamera = GetComponentInChildren<Camera>();
@@ -108,7 +110,6 @@ namespace Kalpa.Player
                 }
             }
 
-            // Auto-create the highlight if not assigned.
             if (highlight == null)
             {
                 var go = new GameObject("BlockHighlight");
@@ -134,9 +135,7 @@ namespace Kalpa.Player
             hotbarBlockIds = list.ToArray();
 
             if (hotbarBlockIds.Length == 0)
-            {
                 Debug.LogWarning("[PlayerController] Hotbar is empty — no matching BlockData found.");
-            }
         }
 
         // --------------------------------------------------------------------
@@ -150,6 +149,7 @@ namespace Kalpa.Player
 
             HandleLook(s);
             HandleMovement(s);
+            HandleFootsteps(s);
             HandleHotbar(s);
             HandleTargeting(s);
         }
@@ -174,7 +174,6 @@ namespace Kalpa.Player
 
         private void HandleMovement(PlayerInput.InputState s)
         {
-            // Horizontal move — build a vector in body-space, then rotate to world-space.
             Vector3 wish = new Vector3(s.MoveRight, 0f, s.MoveForward);
             if (wish.sqrMagnitude > 1f) wish.Normalize();
             wish = Quaternion.Euler(0f, yaw, 0f) * wish;
@@ -183,21 +182,66 @@ namespace Kalpa.Player
             velocity.x = wish.x * speed;
             velocity.z = wish.z * speed;
 
-            // Jump.
             if (s.Jump && physics.IsGrounded)
+            {
                 velocity.y = GameConstants.PlayerJumpForce;
+                AudioSystem.Instance?.PlayJump();
+            }
 
-            // Step physics.
             Vector3 pos = transform.position;
             physics.Step(ref pos, ref velocity, Time.deltaTime);
             transform.position = pos;
 
-            // Safety net: if the player fell out of the world, respawn.
+            // Track ground-transition for audio.
+            wasGrounded = physics.IsGrounded;
+
             if (pos.y < -20f)
             {
                 transform.position = spawnPosition;
                 velocity = Vector3.zero;
             }
+        }
+
+        // --------------------------------------------------------------------
+        // Footsteps
+        // --------------------------------------------------------------------
+
+        private void HandleFootsteps(PlayerInput.InputState s)
+        {
+            if (!physics.IsGrounded)
+            {
+                stepTimer = 0f;
+                return;
+            }
+
+            bool moving = Mathf.Abs(s.MoveForward) > 0.1f || Mathf.Abs(s.MoveRight) > 0.1f;
+            if (!moving)
+            {
+                stepTimer = 0f;
+                return;
+            }
+
+            float interval = s.Sprint ? stepIntervalSprint : stepIntervalWalk;
+            stepTimer += Time.deltaTime;
+            if (stepTimer >= interval)
+            {
+                stepTimer = 0f;
+                AudioSystem.Instance?.PlayFootstep(GetGroundCategory());
+            }
+        }
+
+        /// <summary>Look at the block one below the player and classify it.</summary>
+        private BlockCategory GetGroundCategory()
+        {
+            var gm = GameManager.Instance;
+            if (gm == null) return BlockCategory.Natural;
+
+            int gx = Mathf.FloorToInt(transform.position.x);
+            int gy = Mathf.FloorToInt(transform.position.y - 0.1f);
+            int gz = Mathf.FloorToInt(transform.position.z);
+            byte id = gm.World.GetBlock(gx, gy, gz);
+            var data = gm.BlockRegistry.GetById(id);
+            return data != null ? data.Category : BlockCategory.Natural;
         }
 
         // --------------------------------------------------------------------
@@ -230,7 +274,7 @@ namespace Kalpa.Player
 
                 if (s.BreakPressed)
                 {
-                    BreakBlock(hit.Position);
+                    BreakBlock(hit.Position, hit.BlockId);
                 }
                 else if (s.PlacePressed)
                 {
@@ -244,9 +288,12 @@ namespace Kalpa.Player
             }
         }
 
-        private void BreakBlock(BlockPosition pos)
+        private void BreakBlock(BlockPosition pos, byte oldBlockId)
         {
             var gm = GameManager.Instance;
+            var brokenData = gm.BlockRegistry.GetById(oldBlockId);
+            AudioSystem.Instance?.PlayBreak(brokenData);
+
             gm.World.SetBlock(pos, GameConstants.AirBlockId);
             MarkChunkDirty(pos, gm);
         }
@@ -255,13 +302,14 @@ namespace Kalpa.Player
         {
             byte id = SelectedBlockId;
             if (id == GameConstants.AirBlockId) return;
-
-            // Don't place inside the player.
             if (WouldOverlapPlayer(pos)) return;
 
             var gm = GameManager.Instance;
             gm.World.SetBlock(pos, id);
             MarkChunkDirty(pos, gm);
+
+            var placedData = gm.BlockRegistry.GetById(id);
+            AudioSystem.Instance?.PlayPlace(placedData);
         }
 
         private bool WouldOverlapPlayer(BlockPosition pos)
@@ -275,25 +323,18 @@ namespace Kalpa.Player
             float pMinZ = transform.position.z - half;
             float pMaxZ = transform.position.z + half;
 
-            // Block occupies (pos, pos+1) on all axes.
             return pMaxX > pos.X && pMinX < pos.X + 1
                 && pMaxY > pos.Y && pMinY < pos.Y + 1
                 && pMaxZ > pos.Z && pMinZ < pos.Z + 1;
         }
 
-        /// <summary>
-        /// Rebuild the chunk containing <paramref name="pos"/>, and any neighbouring
-        /// chunk if the modification touched a chunk border (for correct face culling).
-        /// </summary>
         private void MarkChunkDirty(BlockPosition pos, GameManager gm)
         {
-            var manager = FindFirstObjectByType<ChunkManager>();
+            var manager = Object.FindFirstObjectByType<ChunkManager>();
             if (manager == null) return;
 
             RebuildChunkAt(pos.X, pos.Z, manager);
 
-            // If we're on a border, neighbouring chunks also need to redraw
-            // because their edge faces just changed visibility.
             int size = GameConstants.ChunkSize;
             int localX = ((pos.X % size) + size) % size;
             int localZ = ((pos.Z % size) + size) % size;
