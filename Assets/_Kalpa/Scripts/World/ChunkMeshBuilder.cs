@@ -1,11 +1,14 @@
 // ============================================================================
-// ChunkMeshBuilder.cs  (Phase 5A update — atlas UVs)
+// ChunkMeshBuilder.cs  (Phase 9 — opaque + transparent submeshes)
 // ----------------------------------------------------------------------------
-// Now:
-//   * All triangles go into ONE submesh (no per-block-type submeshing).
-//   * UVs are sampled from BlockTextureAtlas — each face's 4 UVs point at the
-//     block's tile in the atlas.
-// One material + one submesh = one draw call per chunk. Massive perf win.
+// Produces a mesh with TWO submeshes:
+//   submesh 0 = opaque faces      (rendered with AtlasMaterial)
+//   submesh 1 = transparent faces (rendered with TransparentAtlasMaterial)
+//
+// Face culling now considers transparency:
+//   * Opaque block face   → render unless neighbour is an opaque solid block.
+//   * Transparent block face → render unless neighbour is the SAME transparent
+//     block id (so a body of water/glass looks solid, with no internal grid).
 // ============================================================================
 
 using System.Collections.Generic;
@@ -15,18 +18,23 @@ using UnityEngine;
 
 namespace Kalpa.World
 {
-    /// <summary>Result of a mesh build.</summary>
+    /// <summary>Result of a mesh build. Two submeshes: 0 opaque, 1 transparent.</summary>
     public struct ChunkMeshData
     {
         public Vector3[] Vertices;
         public Vector3[] Normals;
         public Vector2[] UVs;
-        public int[]     Triangles; // single submesh now
+        public int[]     OpaqueTriangles;
+        public int[]     TransparentTriangles;
 
         public void ApplyTo(Mesh mesh)
         {
             mesh.Clear();
-            if (Vertices == null || Vertices.Length == 0) return;
+            if (Vertices == null || Vertices.Length == 0)
+            {
+                mesh.subMeshCount = 0;
+                return;
+            }
 
             mesh.indexFormat = Vertices.Length > 65000
                 ? UnityEngine.Rendering.IndexFormat.UInt32
@@ -35,78 +43,50 @@ namespace Kalpa.World
             mesh.SetVertices(Vertices);
             mesh.SetNormals(Normals);
             mesh.SetUVs(0, UVs);
-            mesh.subMeshCount = 1;
-            mesh.SetTriangles(Triangles, 0);
+
+            mesh.subMeshCount = 2;
+            mesh.SetTriangles(OpaqueTriangles ?? System.Array.Empty<int>(), 0);
+            mesh.SetTriangles(TransparentTriangles ?? System.Array.Empty<int>(), 1);
+
             mesh.RecalculateBounds();
         }
     }
 
-    /// <summary>
-    /// Reusable, allocation-conscious builder. Not thread-safe — one instance per thread.
-    /// </summary>
     public sealed class ChunkMeshBuilder
     {
-        // --------------------------------------------------------------------
-        // Constants
-        // --------------------------------------------------------------------
-
         private const int Size = GameConstants.ChunkSize;
         private const int Height = GameConstants.ChunkHeight;
 
-        // Face directions.
-        private enum Face { Right = 0, Left = 1, Top = 2, Bottom = 3, Forward = 4, Back = 5 }
-
-        private static readonly (int dx, int dy, int dz)[] FaceOffsets = new (int, int, int)[]
+        private static readonly (int dx, int dy, int dz)[] FaceOffsets =
         {
-            ( 1,  0,  0), // Right
-            (-1,  0,  0), // Left
-            ( 0,  1,  0), // Top
-            ( 0, -1,  0), // Bottom
-            ( 0,  0,  1), // Forward
-            ( 0,  0, -1), // Back
+            ( 1, 0, 0), (-1, 0, 0), ( 0, 1, 0), ( 0, -1, 0), ( 0, 0, 1), ( 0, 0, -1),
         };
 
-        // Vertices per face, counter-clockwise viewed from outside.
         private static readonly Vector3[,] FaceVertices = new Vector3[6, 4]
         {
-            // Right (+X)
             { new Vector3(1,0,0), new Vector3(1,1,0), new Vector3(1,1,1), new Vector3(1,0,1) },
-            // Left (-X)
             { new Vector3(0,0,1), new Vector3(0,1,1), new Vector3(0,1,0), new Vector3(0,0,0) },
-            // Top (+Y)
             { new Vector3(0,1,0), new Vector3(0,1,1), new Vector3(1,1,1), new Vector3(1,1,0) },
-            // Bottom (-Y)
             { new Vector3(0,0,1), new Vector3(0,0,0), new Vector3(1,0,0), new Vector3(1,0,1) },
-            // Forward (+Z)
             { new Vector3(1,0,1), new Vector3(1,1,1), new Vector3(0,1,1), new Vector3(0,0,1) },
-            // Back (-Z)
             { new Vector3(0,0,0), new Vector3(0,1,0), new Vector3(1,1,0), new Vector3(1,0,0) },
         };
 
-        private static readonly Vector3[] FaceNormals = new Vector3[6]
+        private static readonly Vector3[] FaceNormals =
         {
             Vector3.right, Vector3.left, Vector3.up, Vector3.down, Vector3.forward, Vector3.back
         };
 
-        // UV corner ORDER, in the same winding as FaceVertices (0,0)->(0,1)->(1,1)->(1,0)
-        // is mapped to whichever atlas rect a block occupies.
-        private static readonly Vector2[] FaceUVs = new Vector2[4]
+        private static readonly Vector2[] FaceUVs =
         {
             new Vector2(0, 0), new Vector2(0, 1), new Vector2(1, 1), new Vector2(1, 0)
         };
 
-        // --------------------------------------------------------------------
-        // Reusable buffers
-        // --------------------------------------------------------------------
-
-        private readonly List<Vector3> vertices  = new List<Vector3>(4096);
-        private readonly List<Vector3> normals   = new List<Vector3>(4096);
+        private readonly List<Vector3> vertices = new List<Vector3>(4096);
+        private readonly List<Vector3> normals  = new List<Vector3>(4096);
         private readonly List<Vector2> uvs       = new List<Vector2>(4096);
-        private readonly List<int>     triangles = new List<int>(6144);
-
-        // --------------------------------------------------------------------
-        // Build
-        // --------------------------------------------------------------------
+        private readonly List<int> opaqueTris      = new List<int>(6144);
+        private readonly List<int> transparentTris = new List<int>(1024);
 
         public ChunkMeshData Build(Chunk chunk, VoxelWorld world,
                                    BlockRegistry registry, BlockTextureAtlas atlas)
@@ -114,7 +94,8 @@ namespace Kalpa.World
             vertices.Clear();
             normals.Clear();
             uvs.Clear();
-            triangles.Clear();
+            opaqueTris.Clear();
+            transparentTris.Clear();
 
             int originX = chunk.Coordinate.WorldOriginX;
             int originZ = chunk.Coordinate.WorldOriginZ;
@@ -129,9 +110,9 @@ namespace Kalpa.World
                 var data = registry.GetById(id);
                 if (data == null || !data.IsSolid) continue;
 
+                bool transparent = data.IsTransparent;
                 int worldX = originX + x;
                 int worldZ = originZ + z;
-
                 var uvRect = atlas.GetUV(id);
 
                 for (int f = 0; f < 6; f++)
@@ -141,71 +122,73 @@ namespace Kalpa.World
                                                          x + dx, y + dy, z + dz,
                                                          worldX + dx, worldZ + dz);
 
-                    if (ShouldRenderFace(neighbourId, registry))
-                    {
-                        AddFace(x, y, z, f, uvRect);
-                    }
+                    if (ShouldRenderFace(id, neighbourId, registry))
+                        AddFace(x, y, z, f, uvRect, transparent);
                 }
             }
 
             return new ChunkMeshData
             {
-                Vertices  = vertices.ToArray(),
-                Normals   = normals.ToArray(),
-                UVs       = uvs.ToArray(),
-                Triangles = triangles.ToArray(),
+                Vertices             = vertices.ToArray(),
+                Normals              = normals.ToArray(),
+                UVs                  = uvs.ToArray(),
+                OpaqueTriangles      = opaqueTris.ToArray(),
+                TransparentTriangles = transparentTris.ToArray(),
             };
         }
 
-        // --------------------------------------------------------------------
-        // Neighbour lookup
-        // --------------------------------------------------------------------
-
         private static byte GetBlockForCulling(Chunk chunk, VoxelWorld world,
-                                               int lx, int ly, int lz,
-                                               int wx, int wz)
+                                               int lx, int ly, int lz, int wx, int wz)
         {
             if (lx >= 0 && lx < Size && lz >= 0 && lz < Size && ly >= 0 && ly < Height)
                 return chunk.GetBlockLocal(lx, ly, lz);
             return world.GetBlock(wx, ly, wz);
         }
 
-        private static bool ShouldRenderFace(byte neighbourId, BlockRegistry registry)
+        /// <summary>Transparency-aware face culling.</summary>
+        private static bool ShouldRenderFace(byte currentId, byte neighbourId, BlockRegistry registry)
         {
             if (neighbourId == GameConstants.AirBlockId) return true;
-            var data = registry.GetById(neighbourId);
-            return data == null || data.IsTransparent || !data.IsSolid;
+
+            var neighbour = registry.GetById(neighbourId);
+            if (neighbour == null) return true;
+
+            // See-through neighbour (transparent or non-solid).
+            if (neighbour.IsTransparent || !neighbour.IsSolid)
+            {
+                // Cull the shared face between two blocks of the SAME transparent type,
+                // so a mass of water/glass renders as one clean surface (no inner grid).
+                if (currentId == neighbourId) return false;
+                return true;
+            }
+
+            // Opaque solid neighbour → cull.
+            return false;
         }
 
-        // --------------------------------------------------------------------
-        // Face emission — writes 4 verts + 6 triangle indices, with atlas UVs.
-        // --------------------------------------------------------------------
-
-        private void AddFace(int x, int y, int z, int faceIndex, Rect uvRect)
+        private void AddFace(int x, int y, int z, int faceIndex, Rect uvRect, bool transparent)
         {
             var origin = new Vector3(x, y, z);
             var normal = FaceNormals[faceIndex];
-
             int start = vertices.Count;
 
             for (int i = 0; i < 4; i++)
             {
                 vertices.Add(FaceVertices[faceIndex, i] + origin);
                 normals.Add(normal);
-
-                // Map the face's corner UV (0/1 in each axis) into the atlas rect.
                 var localUV = FaceUVs[i];
                 uvs.Add(new Vector2(
                     uvRect.xMin + localUV.x * uvRect.width,
                     uvRect.yMin + localUV.y * uvRect.height));
             }
 
-            triangles.Add(start);
-            triangles.Add(start + 1);
-            triangles.Add(start + 2);
-            triangles.Add(start);
-            triangles.Add(start + 2);
-            triangles.Add(start + 3);
+            var tris = transparent ? transparentTris : opaqueTris;
+            tris.Add(start);
+            tris.Add(start + 1);
+            tris.Add(start + 2);
+            tris.Add(start);
+            tris.Add(start + 2);
+            tris.Add(start + 3);
         }
     }
 }

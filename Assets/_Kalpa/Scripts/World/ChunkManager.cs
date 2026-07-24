@@ -131,7 +131,7 @@ namespace Kalpa.World
                     MinTrunkHeight = treeMinHeight,
                     MaxTrunkHeight = Mathf.Max(treeMinHeight, treeMaxHeight),
                     CanopyRadius = treeCanopyRadius,
-                });
+                }, terrain);
             }
 
             var player = Object.FindFirstObjectByType<Player.PlayerController>();
@@ -179,7 +179,7 @@ namespace Kalpa.World
                     MinTrunkHeight = treeMinHeight,
                     MaxTrunkHeight = Mathf.Max(treeMinHeight, treeMaxHeight),
                     CanopyRadius = treeCanopyRadius,
-                });
+                }, terrain);
 
             for (int dx = -spawnPreloadRadius; dx <= spawnPreloadRadius; dx++)
             for (int dz = -spawnPreloadRadius; dz <= spawnPreloadRadius; dz++)

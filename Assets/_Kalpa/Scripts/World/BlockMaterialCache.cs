@@ -1,27 +1,26 @@
 // ============================================================================
-// BlockMaterialCache.cs  (Phase 5A update — atlas support)
+// BlockMaterialCache.cs  (Phase 9 — opaque + transparent atlas materials)
 // ----------------------------------------------------------------------------
-// Now provides ONE shared material for ALL block types, textured with the atlas.
-// Chunks use a single material + submesh-per-block-type — but because every
-// submesh points at the same atlas, the renderer batches them into one draw
-// call. This is the key perf win of Phase 5A.
+// Now builds TWO materials, both textured with the same atlas:
+//   * AtlasMaterial            — opaque geometry (grass, stone, wood…)
+//   * TransparentAtlasMaterial — alpha-blended geometry (glass, water, leaves)
+//
+// The transparent material is configured for URP alpha blending and placed in
+// the Transparent render queue so it draws AFTER opaque geometry.
 // ============================================================================
 
 using Kalpa.Blocks;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace Kalpa.World
 {
-    /// <summary>
-    /// Provides materials for chunk rendering. Now atlas-based rather than one
-    /// material per block type.
-    /// </summary>
     public sealed class BlockMaterialCache
     {
         private readonly Shader shader;
 
-        /// <summary>The atlas-textured material used by every chunk mesh.</summary>
         public Material AtlasMaterial { get; private set; }
+        public Material TransparentAtlasMaterial { get; private set; }
 
         public BlockMaterialCache()
         {
@@ -35,30 +34,62 @@ namespace Kalpa.World
                 Debug.Log($"[BlockMaterialCache] Using shader: {shader.name}");
         }
 
-        /// <summary>
-        /// Build the single atlas material. Call once, after the atlas has been baked.
-        /// </summary>
+        /// <summary>Build both opaque + transparent materials from the atlas texture.</summary>
         public void BuildAtlasMaterial(Texture2D atlasTexture)
         {
+            // ---- Opaque ----
             AtlasMaterial = new Material(shader) { name = "BlockAtlasMaterial" };
+            AssignTexture(AtlasMaterial, atlasTexture);
+            SetCommon(AtlasMaterial);
 
-            if (AtlasMaterial.HasProperty("_BaseMap"))
-                AtlasMaterial.SetTexture("_BaseMap", atlasTexture);
-            if (AtlasMaterial.HasProperty("_MainTex"))
-                AtlasMaterial.SetTexture("_MainTex", atlasTexture);
-
-            if (AtlasMaterial.HasProperty("_BaseColor"))
-                AtlasMaterial.SetColor("_BaseColor", Color.white);
-            if (AtlasMaterial.HasProperty("_Color"))
-                AtlasMaterial.SetColor("_Color", Color.white);
-
-            if (AtlasMaterial.HasProperty("_Smoothness"))
-                AtlasMaterial.SetFloat("_Smoothness", 0.05f);
-            if (AtlasMaterial.HasProperty("_Metallic"))
-                AtlasMaterial.SetFloat("_Metallic", 0f);
+            // ---- Transparent ----
+            TransparentAtlasMaterial = new Material(shader) { name = "BlockAtlasMaterial_Transparent" };
+            AssignTexture(TransparentAtlasMaterial, atlasTexture);
+            SetCommon(TransparentAtlasMaterial);
+            ConfigureTransparent(TransparentAtlasMaterial);
         }
 
-        /// <summary>Backwards-compat: some old code may still ask for a per-block material.</summary>
-        public Material GetMaterial(BlockData data) => AtlasMaterial;
+        private static void AssignTexture(Material mat, Texture2D tex)
+        {
+            if (mat.HasProperty("_BaseMap")) mat.SetTexture("_BaseMap", tex);
+            if (mat.HasProperty("_MainTex")) mat.SetTexture("_MainTex", tex);
+        }
+
+        private static void SetCommon(Material mat)
+        {
+            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", Color.white);
+            if (mat.HasProperty("_Color"))     mat.SetColor("_Color", Color.white);
+            if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.05f);
+            if (mat.HasProperty("_Metallic"))   mat.SetFloat("_Metallic", 0f);
+        }
+
+        /// <summary>
+        /// Configure a URP Lit material for alpha-blended transparency.
+        /// This is the standard incantation URP requires when doing it from code.
+        /// </summary>
+        private static void ConfigureTransparent(Material mat)
+        {
+            // Surface Type = Transparent
+            if (mat.HasProperty("_Surface")) mat.SetFloat("_Surface", 1f);
+            // Blend mode = Alpha
+            if (mat.HasProperty("_Blend")) mat.SetFloat("_Blend", 0f);
+
+            mat.SetOverrideTag("RenderType", "Transparent");
+
+            if (mat.HasProperty("_SrcBlend")) mat.SetInt("_SrcBlend", (int)BlendMode.SrcAlpha);
+            if (mat.HasProperty("_DstBlend")) mat.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
+            if (mat.HasProperty("_ZWrite"))   mat.SetInt("_ZWrite", 0);
+
+            mat.DisableKeyword("_SURFACE_TYPE_OPAQUE");
+            mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            mat.DisableKeyword("_ALPHATEST_ON");
+            mat.EnableKeyword("_ALPHAPREMULTIPLY_ON");
+
+            mat.renderQueue = (int)RenderQueue.Transparent;
+        }
+
+        /// <summary>Backwards-compat helper.</summary>
+        public Material GetMaterial(BlockData data)
+            => data != null && data.IsTransparent ? TransparentAtlasMaterial : AtlasMaterial;
     }
 }

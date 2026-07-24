@@ -1,8 +1,8 @@
 // ============================================================================
-// ChunkRenderer.cs  (Phase 5A update — single-material atlas rendering)
+// ChunkRenderer.cs  (Phase 9 — two materials: opaque + transparent)
 // ----------------------------------------------------------------------------
-// Uses ONE material for the whole chunk (the atlas material), so there is
-// exactly one draw call per chunk.
+// The chunk mesh now has two submeshes (0 opaque, 1 transparent), so the
+// MeshRenderer gets two materials in matching order.
 // ============================================================================
 
 using Kalpa.Blocks;
@@ -10,9 +10,6 @@ using UnityEngine;
 
 namespace Kalpa.World
 {
-    /// <summary>
-    /// Renders a single chunk. Positioned at the chunk's world origin.
-    /// </summary>
     [RequireComponent(typeof(MeshFilter))]
     [RequireComponent(typeof(MeshRenderer))]
     public sealed class ChunkRenderer : MonoBehaviour
@@ -27,10 +24,6 @@ namespace Kalpa.World
         private MeshFilter meshFilter;
         private MeshRenderer meshRenderer;
         private Mesh mesh;
-
-        // --------------------------------------------------------------------
-        // Public API
-        // --------------------------------------------------------------------
 
         public void Initialise(Chunk chunk, VoxelWorld world, BlockRegistry registry,
                                BlockMaterialCache materials, ChunkMeshBuilder builder,
@@ -49,7 +42,12 @@ namespace Kalpa.World
             mesh = new Mesh { name = $"ChunkMesh_{chunk.Coordinate.X}_{chunk.Coordinate.Z}" };
             meshFilter.sharedMesh = mesh;
 
-            meshRenderer.sharedMaterial = materials.AtlasMaterial;
+            // Two materials matching the two submeshes.
+            meshRenderer.sharedMaterials = new[]
+            {
+                materials.AtlasMaterial,             // submesh 0 — opaque
+                materials.TransparentAtlasMaterial,  // submesh 1 — transparent
+            };
 
             transform.position = new Vector3(chunk.Coordinate.WorldOriginX, 0f,
                                              chunk.Coordinate.WorldOriginZ);

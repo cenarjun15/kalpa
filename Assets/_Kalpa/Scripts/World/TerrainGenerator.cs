@@ -1,10 +1,13 @@
 // ============================================================================
-// TerrainGenerator.cs
+// TerrainGenerator.cs  (Phase 10 — biome-aware)
 // ----------------------------------------------------------------------------
-// Procedurally fills a chunk with terrain using layered Perlin noise.
-// Layer 1: broad hills (low frequency)
-// Layer 2: small bumps  (high frequency)
-// Combined and shifted around sea level.
+// Terrain now varies by biome:
+//   * A low-frequency biome noise field picks a biome per world column, so
+//     biomes form large coherent regions.
+//   * Surface / sub-surface / deep blocks come from the biome's settings.
+//   * Terrain height amplitude is scaled per biome (deserts flatter, snow
+//     mountains taller).
+//   * Biome boundaries are height-blended to avoid harsh cliffs at borders.
 // ============================================================================
 
 using Kalpa.Blocks;
@@ -13,38 +16,86 @@ using UnityEngine;
 
 namespace Kalpa.World
 {
-    /// <summary>
-    /// Simple layered-noise terrain generator.
-    /// Deterministic for a given seed — a chunk always regenerates identically.
-    /// </summary>
     public sealed class TerrainGenerator
     {
-        // Cached block IDs (looked up once at construction).
-        private readonly byte grassId;
-        private readonly byte dirtId;
-        private readonly byte stoneId;
-
+        private readonly BlockRegistry registry;
         private readonly float noiseOffset;
+        private readonly float biomeOffset;
 
-        // Noise tuning.
-        private const float LowFreq = 0.015f;
-        private const float HighFreq = 0.08f;
-        private const int TerrainAmplitude = 24;
-        private const int DirtLayerDepth = 3;
+        // Resolved block IDs per biome (cached).
+        private struct ResolvedBiome
+        {
+            public byte Surface, SubSurface, Deep;
+            public float HeightScale;
+            public float TreeDensity;
+            public bool AllowTrees;
+        }
+        private readonly ResolvedBiome[] biomes;
+
+        private const float TerrainFreqLow  = 0.015f;
+        private const float TerrainFreqHigh = 0.08f;
+        private const float BiomeFreq = 0.006f;          // large biome regions
+        private const int BaseAmplitude = 22;
+        private const int DirtDepth = 3;
 
         public TerrainGenerator(int seed, BlockRegistry registry)
         {
-            grassId = registry.GetByName("kalpa:grass")?.Id ?? 1;
-            dirtId  = registry.GetByName("kalpa:dirt")?.Id  ?? 2;
-            stoneId = registry.GetByName("kalpa:stone")?.Id ?? 3;
+            this.registry = registry;
 
-            // Convert seed to a stable noise offset that keeps sampling in a
-            // safe positive range for Mathf.PerlinNoise (which repeats at 256).
-            System.Random rng = new System.Random(seed);
-            noiseOffset = (float)(rng.NextDouble() * 10_000);
+            var rng = new System.Random(seed);
+            noiseOffset = (float)(rng.NextDouble() * 10000);
+            biomeOffset = (float)(rng.NextDouble() * 10000);
+
+            // Resolve block IDs for all biomes once.
+            var types = (BiomeType[])System.Enum.GetValues(typeof(BiomeType));
+            biomes = new ResolvedBiome[types.Length];
+            foreach (var t in types)
+            {
+                var s = BiomeSettings.For(t);
+                biomes[(int)t] = new ResolvedBiome
+                {
+                    Surface     = Id(s.SurfaceBlock, 1),
+                    SubSurface  = Id(s.SubSurfaceBlock, 2),
+                    Deep        = Id(s.DeepBlock, 3),
+                    HeightScale = s.HeightScale,
+                    TreeDensity = s.TreeDensity,
+                    AllowTrees  = s.AllowTrees,
+                };
+            }
         }
 
-        /// <summary>Fill the chunk with terrain in place.</summary>
+        private byte Id(string name, byte fallback)
+            => registry.GetByName(name)?.Id ?? fallback;
+
+        // --------------------------------------------------------------------
+        // Public: biome query (used by TreeGenerator for per-biome density)
+        // --------------------------------------------------------------------
+
+        public BiomeType GetBiomeAt(int worldX, int worldZ)
+        {
+            float bx = (worldX + biomeOffset) * BiomeFreq;
+            float bz = (worldZ + biomeOffset) * BiomeFreq;
+
+            float temperature = Mathf.PerlinNoise(bx, bz);
+            float humidity     = Mathf.PerlinNoise(bx + 500f, bz + 500f);
+
+            // Simple temperature/humidity → biome mapping.
+            if (temperature > 0.65f && humidity < 0.4f) return BiomeType.Desert;
+            if (temperature < 0.35f)                     return BiomeType.Snow;
+            if (humidity > 0.6f)                          return BiomeType.Forest;
+            return BiomeType.Plains;
+        }
+
+        public float GetTreeDensityAt(int worldX, int worldZ)
+        {
+            var b = biomes[(int)GetBiomeAt(worldX, worldZ)];
+            return b.AllowTrees ? b.TreeDensity : 0f;
+        }
+
+        // --------------------------------------------------------------------
+        // Generation
+        // --------------------------------------------------------------------
+
         public void Generate(Chunk chunk)
         {
             int originX = chunk.Coordinate.WorldOriginX;
@@ -56,33 +107,34 @@ namespace Kalpa.World
                 int wx = originX + lx;
                 int wz = originZ + lz;
 
-                int height = GetHeightAt(wx, wz);
+                var biomeType = GetBiomeAt(wx, wz);
+                var biome = biomes[(int)biomeType];
+
+                int height = HeightAt(wx, wz, biome.HeightScale);
 
                 for (int y = 0; y <= height && y < GameConstants.ChunkHeight; y++)
                 {
                     byte id;
-                    if (y == height) id = grassId;
-                    else if (y >= height - DirtLayerDepth) id = dirtId;
-                    else id = stoneId;
+                    if (y == height) id = biome.Surface;
+                    else if (y >= height - DirtDepth) id = biome.SubSurface;
+                    else id = biome.Deep;
 
                     chunk.SetBlockLocal(lx, y, lz, id);
                 }
             }
         }
 
-        /// <summary>Compute the surface height at world (x, z).</summary>
-        private int GetHeightAt(int x, int z)
+        private int HeightAt(int x, int z, float biomeScale)
         {
             float fx = x + noiseOffset;
             float fz = z + noiseOffset;
 
-            // Two layers of Perlin noise combined for interesting terrain.
-            float low  = Mathf.PerlinNoise(fx * LowFreq,  fz * LowFreq);
-            float high = Mathf.PerlinNoise(fx * HighFreq, fz * HighFreq) * 0.3f;
-
+            float low  = Mathf.PerlinNoise(fx * TerrainFreqLow,  fz * TerrainFreqLow);
+            float high = Mathf.PerlinNoise(fx * TerrainFreqHigh, fz * TerrainFreqHigh) * 0.3f;
             float combined = Mathf.Clamp01((low + high) / 1.3f);
 
-            int height = GameConstants.SeaLevel + Mathf.RoundToInt((combined - 0.5f) * TerrainAmplitude);
+            int amp = Mathf.RoundToInt(BaseAmplitude * biomeScale);
+            int height = GameConstants.SeaLevel + Mathf.RoundToInt((combined - 0.5f) * amp);
             return Mathf.Clamp(height, 1, GameConstants.ChunkHeight - 2);
         }
     }

@@ -16,7 +16,7 @@ MonoBehaviour:
   internalName: kalpa:log
   displayName: Log
   category: 3
-  texture: {fileID: 2800000, guid: 87256c3a418d64b40abd47bf8b067002, type: 3}
+  texture: {fileID: 2800000, guid: 7860df16c7f1aee4f8baf65b4cd38957, type: 3}
   debugColor: {r: 1, g: 1, b: 1, a: 1}
   isSolid: 1
   isTransparent: 0

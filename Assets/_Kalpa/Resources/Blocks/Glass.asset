@@ -10,14 +10,14 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 69d82a4128c5a454698c9f2c65b2709b, type: 3}
-  m_Name: Leaves
+  m_Name: Glass
   m_EditorClassIdentifier: Assembly-CSharp::Kalpa.Blocks.BlockData
-  id: 8
-  internalName: kalpa:leaves
-  displayName: Leaves
-  category: 4
-  texture: {fileID: 2800000, guid: eff1f94c1bc222544a03e61f544bfd05, type: 3}
-  debugColor: {r: 0, g: 0.3921569, b: 0, a: 0.8509804}
+  id: 9
+  internalName: kalpa:glass
+  displayName: Glass
+  category: 6
+  texture: {fileID: 2800000, guid: 61103b0c941cd8b49929d84f6fb2c048, type: 3}
+  debugColor: {r: 0.8, g: 0.9, b: 1, a: 0.34901962}
   isSolid: 1
   isTransparent: 1
   hardness: 1

@@ -1,8 +1,8 @@
 // ============================================================================
-// PlayerInput.cs  (Phase 4B update)
+// PlayerInput.cs  (Phase 10 — scroll-wheel hotbar)
 // ----------------------------------------------------------------------------
-// Now also aware of the PauseMenu — when the menu is open, input is zeroed and
-// the cursor is left free for menu interaction.
+// Adds HotbarScroll: +1 / -1 when the mouse wheel moves, so the player can
+// cycle hotbar slots with the wheel in addition to number keys.
 // ============================================================================
 
 using Kalpa.UI;
@@ -10,39 +10,25 @@ using UnityEngine;
 
 namespace Kalpa.Player
 {
-    /// <summary>
-    /// Snapshots input each frame into a struct that other systems read.
-    /// Nothing else in the game should call Input.* directly.
-    /// </summary>
     public sealed class PlayerInput : MonoBehaviour
     {
-        // --------------------------------------------------------------------
-        // Current input snapshot (public read-only)
-        // --------------------------------------------------------------------
-
         public struct InputState
         {
-            public float MoveForward;   // -1..1  (W/S)
-            public float MoveRight;     // -1..1  (D/A)
+            public float MoveForward;
+            public float MoveRight;
             public bool  Jump;
             public bool  Sprint;
-            public float MouseDeltaX;   // pixels
-            public float MouseDeltaY;   // pixels
-
+            public float MouseDeltaX;
+            public float MouseDeltaY;
             public bool  BreakPressed;
             public bool  PlacePressed;
-
-            public int   HotbarSelection;
+            public int   HotbarSelection; // 1..N direct select, 0 = none
+            public int   HotbarScroll;    // -1, 0, +1
         }
 
         public InputState State { get; private set; }
 
-        // --------------------------------------------------------------------
-        // Cursor lock
-        // --------------------------------------------------------------------
-
         [Header("Cursor Lock")]
-        [Tooltip("If true, cursor auto-locks when the game view is focused.")]
         [SerializeField] private bool autoLockOnClick = true;
 
         private bool cursorLocked;
@@ -56,18 +42,17 @@ namespace Kalpa.Player
 
         private void Update()
         {
-            // If pause menu is open, DON'T lock cursor and DON'T register gameplay input.
             bool paused = pauseMenu != null && pauseMenu.IsOpen;
             if (paused)
             {
                 cursorLocked = false;
-                State = default; // zero everything
+                State = default;
                 return;
             }
 
             HandleCursorLock();
 
-            var s = new InputState
+            State = new InputState
             {
                 MoveForward     = Input.GetAxisRaw("Vertical"),
                 MoveRight       = Input.GetAxisRaw("Horizontal"),
@@ -78,27 +63,29 @@ namespace Kalpa.Player
                 BreakPressed    = cursorLocked && Input.GetMouseButtonDown(0),
                 PlacePressed    = cursorLocked && Input.GetMouseButtonDown(1),
                 HotbarSelection = ReadHotbarKey(),
+                HotbarScroll    = ReadScroll(),
             };
-
-            State = s;
         }
 
         private int ReadHotbarKey()
         {
             for (int i = 1; i <= 9; i++)
-            {
                 if (Input.GetKeyDown(KeyCode.Alpha0 + i)) return i;
-            }
+            return 0;
+        }
+
+        private int ReadScroll()
+        {
+            float scroll = Input.GetAxisRaw("Mouse ScrollWheel");
+            if (scroll > 0.01f) return -1; // wheel up → previous slot
+            if (scroll < -0.01f) return 1; // wheel down → next slot
             return 0;
         }
 
         private void HandleCursorLock()
         {
-            // ESC is now handled by PauseMenu, not here.
             if (autoLockOnClick && Input.GetMouseButtonDown(0) && !cursorLocked)
-            {
                 SetCursorLocked(true);
-            }
         }
 
         private void SetCursorLocked(bool locked)

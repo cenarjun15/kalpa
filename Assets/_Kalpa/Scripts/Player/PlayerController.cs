@@ -250,10 +250,18 @@ namespace Kalpa.Player
 
         private void HandleHotbar(PlayerInput.InputState s)
         {
-            if (s.HotbarSelection > 0 && hotbarBlockIds.Length > 0)
+            if (hotbarBlockIds.Length == 0) return;
+
+            // Direct number-key selection.
+            if (s.HotbarSelection > 0)
             {
-                int idx = Mathf.Clamp(s.HotbarSelection - 1, 0, hotbarBlockIds.Length - 1);
-                selectedSlot = idx;
+                selectedSlot = Mathf.Clamp(s.HotbarSelection - 1, 0, hotbarBlockIds.Length - 1);
+            }
+
+            // Scroll-wheel cycling (wraps around).
+            if (s.HotbarScroll != 0)
+            {
+                selectedSlot = (selectedSlot + s.HotbarScroll + hotbarBlockIds.Length) % hotbarBlockIds.Length;
             }
         }
 
