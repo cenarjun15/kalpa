@@ -65,6 +65,7 @@ namespace Kalpa.Player
 
         private byte[] hotbarBlockIds = new byte[0];
         private int selectedSlot;
+        private byte explicitBlockId = 0;   // set by BlockPicker; 0 = use hotbar
 
         // Audio state.
         private float stepTimer;
@@ -77,9 +78,20 @@ namespace Kalpa.Player
         public int SelectedSlot => selectedSlot;
         public IReadOnlyList<byte> HotbarBlockIds => hotbarBlockIds;
         public byte SelectedBlockId
-            => hotbarBlockIds.Length == 0
-                ? GameConstants.AirBlockId
-                : hotbarBlockIds[selectedSlot];
+        {
+            get
+            {
+                if (explicitBlockId != GameConstants.AirBlockId) return explicitBlockId;
+                if (hotbarBlockIds.Length == 0) return GameConstants.AirBlockId;
+                return hotbarBlockIds[selectedSlot];
+            }
+        }
+
+        /// <summary>Called by BlockPicker to select ANY block directly.</summary>
+        public void SetSelectedBlockById(byte id)
+        {
+            explicitBlockId = id;
+        }
 
         // --------------------------------------------------------------------
         // Bootstrap
@@ -252,16 +264,16 @@ namespace Kalpa.Player
         {
             if (hotbarBlockIds.Length == 0) return;
 
-            // Direct number-key selection.
             if (s.HotbarSelection > 0)
             {
                 selectedSlot = Mathf.Clamp(s.HotbarSelection - 1, 0, hotbarBlockIds.Length - 1);
+                explicitBlockId = 0; // number key overrides picker
             }
 
-            // Scroll-wheel cycling (wraps around).
             if (s.HotbarScroll != 0)
             {
                 selectedSlot = (selectedSlot + s.HotbarScroll + hotbarBlockIds.Length) % hotbarBlockIds.Length;
+                explicitBlockId = 0; // scroll overrides picker
             }
         }
 

@@ -119,6 +119,50 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
+--- !u!1 &327594287
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 327594289}
+  - component: {fileID: 327594288}
+  m_Layer: 0
+  m_Name: BlockListDebugger
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &327594288
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 327594287}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ee435afc3b6a9304f9b5a6a6990ce208, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Kalpa.Diagnostics.BlockListDebugger
+--- !u!4 &327594289
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 327594287}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -14.78599, y: -0, z: 26.33947}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &406673472
 GameObject:
   m_ObjectHideFlags: 0
@@ -650,6 +694,12 @@ MonoBehaviour:
   - kalpa:marble
   - kalpa:glass
   - kalpa:water
+  - kalpa:temple_stone
+  - kalpa:carved_sandstone
+  - kalpa:terracotta
+  - kalpa:thatch
+  - kalpa:mud_wall
+  - kalpa:patterned_marble
   stepIntervalWalk: 0.45
   stepIntervalSprint: 0.3
 --- !u!1 &1046066637
@@ -730,6 +780,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Kalpa.Core.GameManager
   verboseLogging: 1
   dontDestroyOnLoad: 1
+  leafTextureSeed: 1337
 --- !u!4 &1154565687
 Transform:
   m_ObjectHideFlags: 0
@@ -740,6 +791,54 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: -0, z: -0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1371079458
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1371079460}
+  - component: {fileID: 1371079459}
+  m_Layer: 0
+  m_Name: BlockPicker
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1371079459
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1371079458}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 20564684f57a55144b6bca629e575421, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Kalpa.UI.BlockPicker
+  toggleKey: 101
+  columns: 6
+  cellSize: 78
+  cellPadding: 8
+--- !u!4 &1371079460
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1371079458}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -14.78599, y: 0, z: 26.33947}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -779,6 +878,7 @@ MonoBehaviour:
   starSize: 1.4
   moonSize: 40
   moonColor: {r: 0.95, g: 0.95, b: 0.85, a: 1}
+  logNightFactor: 0
 --- !u!4 &1474621815
 Transform:
   m_ObjectHideFlags: 0
@@ -900,3 +1000,5 @@ SceneRoots:
   - {fileID: 1521354397}
   - {fileID: 406673474}
   - {fileID: 1474621815}
+  - {fileID: 1371079460}
+  - {fileID: 327594289}

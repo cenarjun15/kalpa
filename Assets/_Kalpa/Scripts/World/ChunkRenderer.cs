@@ -1,8 +1,5 @@
 // ============================================================================
-// ChunkRenderer.cs  (Phase 9 — two materials: opaque + transparent)
-// ----------------------------------------------------------------------------
-// The chunk mesh now has two submeshes (0 opaque, 1 transparent), so the
-// MeshRenderer gets two materials in matching order.
+// ChunkRenderer.cs  (Phase 11 — three materials: opaque/transparent/cutout)
 // ============================================================================
 
 using Kalpa.Blocks;
@@ -29,12 +26,8 @@ namespace Kalpa.World
                                BlockMaterialCache materials, ChunkMeshBuilder builder,
                                BlockTextureAtlas atlas)
         {
-            this.chunk     = chunk;
-            this.world     = world;
-            this.registry  = registry;
-            this.materials = materials;
-            this.builder   = builder;
-            this.atlas     = atlas;
+            this.chunk = chunk; this.world = world; this.registry = registry;
+            this.materials = materials; this.builder = builder; this.atlas = atlas;
 
             meshFilter   = GetComponent<MeshFilter>();
             meshRenderer = GetComponent<MeshRenderer>();
@@ -42,11 +35,12 @@ namespace Kalpa.World
             mesh = new Mesh { name = $"ChunkMesh_{chunk.Coordinate.X}_{chunk.Coordinate.Z}" };
             meshFilter.sharedMesh = mesh;
 
-            // Two materials matching the two submeshes.
+            // Three materials matching the three submeshes.
             meshRenderer.sharedMaterials = new[]
             {
-                materials.AtlasMaterial,             // submesh 0 — opaque
-                materials.TransparentAtlasMaterial,  // submesh 1 — transparent
+                materials.AtlasMaterial,             // 0 opaque
+                materials.TransparentAtlasMaterial,  // 1 transparent
+                materials.CutoutMaterial,            // 2 cutout
             };
 
             transform.position = new Vector3(chunk.Coordinate.WorldOriginX, 0f,
@@ -57,10 +51,8 @@ namespace Kalpa.World
         public void Rebuild()
         {
             if (chunk == null) return;
-
             var meshData = builder.Build(chunk, world, registry, atlas);
             meshData.ApplyTo(mesh);
-
             chunk.IsDirty = false;
         }
 

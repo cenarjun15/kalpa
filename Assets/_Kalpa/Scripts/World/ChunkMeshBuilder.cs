@@ -1,14 +1,12 @@
 // ============================================================================
-// ChunkMeshBuilder.cs  (Phase 9 — opaque + transparent submeshes)
+// ChunkMeshBuilder.cs  (Phase 11 — three submeshes: opaque/transparent/cutout)
 // ----------------------------------------------------------------------------
-// Produces a mesh with TWO submeshes:
-//   submesh 0 = opaque faces      (rendered with AtlasMaterial)
-//   submesh 1 = transparent faces (rendered with TransparentAtlasMaterial)
+// submesh 0 = opaque       (AtlasMaterial, atlas UVs)
+// submesh 1 = transparent  (TransparentAtlasMaterial, atlas UVs)
+// submesh 2 = cutout        (CutoutMaterial, FULL 0..1 UVs → leaf texture)
 //
-// Face culling now considers transparency:
-//   * Opaque block face   → render unless neighbour is an opaque solid block.
-//   * Transparent block face → render unless neighbour is the SAME transparent
-//     block id (so a body of water/glass looks solid, with no internal grid).
+// Cutout faces use full-tile UVs because the cutout material samples the leaf
+// texture directly (it needs the per-pixel alpha the atlas can't store).
 // ============================================================================
 
 using System.Collections.Generic;
@@ -18,23 +16,19 @@ using UnityEngine;
 
 namespace Kalpa.World
 {
-    /// <summary>Result of a mesh build. Two submeshes: 0 opaque, 1 transparent.</summary>
     public struct ChunkMeshData
     {
         public Vector3[] Vertices;
         public Vector3[] Normals;
         public Vector2[] UVs;
-        public int[]     OpaqueTriangles;
-        public int[]     TransparentTriangles;
+        public int[] OpaqueTriangles;
+        public int[] TransparentTriangles;
+        public int[] CutoutTriangles;
 
         public void ApplyTo(Mesh mesh)
         {
             mesh.Clear();
-            if (Vertices == null || Vertices.Length == 0)
-            {
-                mesh.subMeshCount = 0;
-                return;
-            }
+            if (Vertices == null || Vertices.Length == 0) { mesh.subMeshCount = 0; return; }
 
             mesh.indexFormat = Vertices.Length > 65000
                 ? UnityEngine.Rendering.IndexFormat.UInt32
@@ -44,9 +38,10 @@ namespace Kalpa.World
             mesh.SetNormals(Normals);
             mesh.SetUVs(0, UVs);
 
-            mesh.subMeshCount = 2;
+            mesh.subMeshCount = 3;
             mesh.SetTriangles(OpaqueTriangles ?? System.Array.Empty<int>(), 0);
             mesh.SetTriangles(TransparentTriangles ?? System.Array.Empty<int>(), 1);
+            mesh.SetTriangles(CutoutTriangles ?? System.Array.Empty<int>(), 2);
 
             mesh.RecalculateBounds();
         }
@@ -87,15 +82,13 @@ namespace Kalpa.World
         private readonly List<Vector2> uvs       = new List<Vector2>(4096);
         private readonly List<int> opaqueTris      = new List<int>(6144);
         private readonly List<int> transparentTris = new List<int>(1024);
+        private readonly List<int> cutoutTris      = new List<int>(2048);
 
         public ChunkMeshData Build(Chunk chunk, VoxelWorld world,
                                    BlockRegistry registry, BlockTextureAtlas atlas)
         {
-            vertices.Clear();
-            normals.Clear();
-            uvs.Clear();
-            opaqueTris.Clear();
-            transparentTris.Clear();
+            vertices.Clear(); normals.Clear(); uvs.Clear();
+            opaqueTris.Clear(); transparentTris.Clear(); cutoutTris.Clear();
 
             int originX = chunk.Coordinate.WorldOriginX;
             int originZ = chunk.Coordinate.WorldOriginZ;
@@ -110,10 +103,13 @@ namespace Kalpa.World
                 var data = registry.GetById(id);
                 if (data == null || !data.IsSolid) continue;
 
-                bool transparent = data.IsTransparent;
                 int worldX = originX + x;
                 int worldZ = originZ + z;
                 var uvRect = atlas.GetUV(id);
+
+                RenderKind kind = data.IsCutout ? RenderKind.Cutout
+                                 : data.IsTransparent ? RenderKind.Transparent
+                                 : RenderKind.Opaque;
 
                 for (int f = 0; f < 6; f++)
                 {
@@ -122,8 +118,8 @@ namespace Kalpa.World
                                                          x + dx, y + dy, z + dz,
                                                          worldX + dx, worldZ + dz);
 
-                    if (ShouldRenderFace(id, neighbourId, registry))
-                        AddFace(x, y, z, f, uvRect, transparent);
+                    if (ShouldRenderFace(id, neighbourId, registry, kind))
+                        AddFace(x, y, z, f, uvRect, kind);
                 }
             }
 
@@ -134,8 +130,11 @@ namespace Kalpa.World
                 UVs                  = uvs.ToArray(),
                 OpaqueTriangles      = opaqueTris.ToArray(),
                 TransparentTriangles = transparentTris.ToArray(),
+                CutoutTriangles      = cutoutTris.ToArray(),
             };
         }
+
+        private enum RenderKind { Opaque, Transparent, Cutout }
 
         private static byte GetBlockForCulling(Chunk chunk, VoxelWorld world,
                                                int lx, int ly, int lz, int wx, int wz)
@@ -145,19 +144,23 @@ namespace Kalpa.World
             return world.GetBlock(wx, ly, wz);
         }
 
-        /// <summary>Transparency-aware face culling.</summary>
-        private static bool ShouldRenderFace(byte currentId, byte neighbourId, BlockRegistry registry)
+        private static bool ShouldRenderFace(byte currentId, byte neighbourId,
+                                             BlockRegistry registry, RenderKind kind)
         {
             if (neighbourId == GameConstants.AirBlockId) return true;
 
             var neighbour = registry.GetById(neighbourId);
             if (neighbour == null) return true;
 
-            // See-through neighbour (transparent or non-solid).
-            if (neighbour.IsTransparent || !neighbour.IsSolid)
+            // Cutout foliage: render every face touching air OR a non-same block,
+            // so the canopy shows internal leafy structure. Cull only between the
+            // same leaf id to avoid overdraw in dense clumps.
+            if (kind == RenderKind.Cutout)
+                return neighbourId != currentId;
+
+            // Transparent (glass/water).
+            if (neighbour.IsTransparent || neighbour.IsCutout || !neighbour.IsSolid)
             {
-                // Cull the shared face between two blocks of the SAME transparent type,
-                // so a mass of water/glass renders as one clean surface (no inner grid).
                 if (currentId == neighbourId) return false;
                 return true;
             }
@@ -166,7 +169,7 @@ namespace Kalpa.World
             return false;
         }
 
-        private void AddFace(int x, int y, int z, int faceIndex, Rect uvRect, bool transparent)
+        private void AddFace(int x, int y, int z, int faceIndex, Rect uvRect, RenderKind kind)
         {
             var origin = new Vector3(x, y, z);
             var normal = FaceNormals[faceIndex];
@@ -176,19 +179,28 @@ namespace Kalpa.World
             {
                 vertices.Add(FaceVertices[faceIndex, i] + origin);
                 normals.Add(normal);
+
                 var localUV = FaceUVs[i];
-                uvs.Add(new Vector2(
-                    uvRect.xMin + localUV.x * uvRect.width,
-                    uvRect.yMin + localUV.y * uvRect.height));
+                if (kind == RenderKind.Cutout)
+                {
+                    // Cutout samples the leaf texture directly → full 0..1 UV.
+                    uvs.Add(localUV);
+                }
+                else
+                {
+                    // Opaque/transparent sample the shared atlas → map into the tile rect.
+                    uvs.Add(new Vector2(
+                        uvRect.xMin + localUV.x * uvRect.width,
+                        uvRect.yMin + localUV.y * uvRect.height));
+                }
             }
 
-            var tris = transparent ? transparentTris : opaqueTris;
-            tris.Add(start);
-            tris.Add(start + 1);
-            tris.Add(start + 2);
-            tris.Add(start);
-            tris.Add(start + 2);
-            tris.Add(start + 3);
+            List<int> tris = kind == RenderKind.Cutout ? cutoutTris
+                           : kind == RenderKind.Transparent ? transparentTris
+                           : opaqueTris;
+
+            tris.Add(start); tris.Add(start + 1); tris.Add(start + 2);
+            tris.Add(start); tris.Add(start + 2); tris.Add(start + 3);
         }
     }
 }

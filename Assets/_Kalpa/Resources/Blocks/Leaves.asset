@@ -15,9 +15,10 @@ MonoBehaviour:
   id: 8
   internalName: kalpa:leaves
   displayName: Leaves
-  category: 4
-  texture: {fileID: 2800000, guid: eff1f94c1bc222544a03e61f544bfd05, type: 3}
+  category: 1
+  texture: {fileID: 2800000, guid: 5a04944408c966c45aef1294d549eba6, type: 3}
   debugColor: {r: 0, g: 0.3921569, b: 0, a: 0.8509804}
   isSolid: 1
-  isTransparent: 1
+  isTransparent: 0
+  isCutout: 0
   hardness: 1

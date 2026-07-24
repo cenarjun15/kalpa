@@ -10,13 +10,13 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 69d82a4128c5a454698c9f2c65b2709b, type: 3}
-  m_Name: Grass
+  m_Name: Terracotta
   m_EditorClassIdentifier: Assembly-CSharp::Kalpa.Blocks.BlockData
-  id: 1
-  internalName: kalpa:grass
-  displayName: Grass
-  category: 1
-  texture: {fileID: 2800000, guid: 3659300f11e32c342b1f141d53de013d, type: 3}
+  id: 13
+  internalName: kalpa:terracotta
+  displayName: Terracotta
+  category: 8
+  texture: {fileID: 0}
   debugColor: {r: 1, g: 1, b: 1, a: 1}
   isSolid: 1
   isTransparent: 0

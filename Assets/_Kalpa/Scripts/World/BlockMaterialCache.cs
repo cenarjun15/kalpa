@@ -1,12 +1,13 @@
 // ============================================================================
-// BlockMaterialCache.cs  (Phase 9 — opaque + transparent atlas materials)
+// BlockMaterialCache.cs  (Phase 11 — adds cutout material)
 // ----------------------------------------------------------------------------
-// Now builds TWO materials, both textured with the same atlas:
-//   * AtlasMaterial            — opaque geometry (grass, stone, wood…)
-//   * TransparentAtlasMaterial — alpha-blended geometry (glass, water, leaves)
-//
-// The transparent material is configured for URP alpha blending and placed in
-// the Transparent render queue so it draws AFTER opaque geometry.
+// Three materials now:
+//   * AtlasMaterial            — opaque geometry
+//   * TransparentAtlasMaterial — alpha-blended (glass, water)
+//   * CutoutMaterial           — alpha-TESTED foliage (leaves), samples the
+//                                generated leaf texture directly (not the atlas)
+//                                because cutout needs per-pixel alpha the atlas
+//                                doesn't preserve.
 // ============================================================================
 
 using Kalpa.Blocks;
@@ -21,6 +22,7 @@ namespace Kalpa.World
 
         public Material AtlasMaterial { get; private set; }
         public Material TransparentAtlasMaterial { get; private set; }
+        public Material CutoutMaterial { get; private set; }
 
         public BlockMaterialCache()
         {
@@ -28,25 +30,29 @@ namespace Kalpa.World
                   ?? Shader.Find("Universal Render Pipeline/Simple Lit")
                   ?? Shader.Find("Standard");
 
-            if (shader == null)
-                Debug.LogError("[BlockMaterialCache] No usable shader found!");
-            else
-                Debug.Log($"[BlockMaterialCache] Using shader: {shader.name}");
+            if (shader == null) Debug.LogError("[BlockMaterialCache] No usable shader!");
+            else Debug.Log($"[BlockMaterialCache] Using shader: {shader.name}");
         }
 
-        /// <summary>Build both opaque + transparent materials from the atlas texture.</summary>
         public void BuildAtlasMaterial(Texture2D atlasTexture)
         {
-            // ---- Opaque ----
             AtlasMaterial = new Material(shader) { name = "BlockAtlasMaterial" };
             AssignTexture(AtlasMaterial, atlasTexture);
             SetCommon(AtlasMaterial);
 
-            // ---- Transparent ----
             TransparentAtlasMaterial = new Material(shader) { name = "BlockAtlasMaterial_Transparent" };
             AssignTexture(TransparentAtlasMaterial, atlasTexture);
             SetCommon(TransparentAtlasMaterial);
             ConfigureTransparent(TransparentAtlasMaterial);
+        }
+
+        /// <summary>Build the cutout foliage material from a leaf texture with alpha holes.</summary>
+        public void BuildCutoutMaterial(Texture2D leafTexture)
+        {
+            CutoutMaterial = new Material(shader) { name = "BlockLeafCutout" };
+            AssignTexture(CutoutMaterial, leafTexture);
+            SetCommon(CutoutMaterial);
+            ConfigureCutout(CutoutMaterial);
         }
 
         private static void AssignTexture(Material mat, Texture2D tex)
@@ -63,33 +69,44 @@ namespace Kalpa.World
             if (mat.HasProperty("_Metallic"))   mat.SetFloat("_Metallic", 0f);
         }
 
-        /// <summary>
-        /// Configure a URP Lit material for alpha-blended transparency.
-        /// This is the standard incantation URP requires when doing it from code.
-        /// </summary>
         private static void ConfigureTransparent(Material mat)
         {
-            // Surface Type = Transparent
             if (mat.HasProperty("_Surface")) mat.SetFloat("_Surface", 1f);
-            // Blend mode = Alpha
             if (mat.HasProperty("_Blend")) mat.SetFloat("_Blend", 0f);
-
             mat.SetOverrideTag("RenderType", "Transparent");
-
             if (mat.HasProperty("_SrcBlend")) mat.SetInt("_SrcBlend", (int)BlendMode.SrcAlpha);
             if (mat.HasProperty("_DstBlend")) mat.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
-            if (mat.HasProperty("_ZWrite"))   mat.SetInt("_ZWrite", 0);
-
+            if (mat.HasProperty("_ZWrite")) mat.SetInt("_ZWrite", 0);
             mat.DisableKeyword("_SURFACE_TYPE_OPAQUE");
             mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
-            mat.DisableKeyword("_ALPHATEST_ON");
             mat.EnableKeyword("_ALPHAPREMULTIPLY_ON");
-
             mat.renderQueue = (int)RenderQueue.Transparent;
         }
 
-        /// <summary>Backwards-compat helper.</summary>
+        /// <summary>
+        /// Alpha-TEST (cutout): pixels below the cutoff are discarded, so foliage
+        /// has hard-edged transparent gaps and still writes depth (no sorting issues).
+        /// </summary>
+        private static void ConfigureCutout(Material mat)
+        {
+            // URP alpha clipping.
+            if (mat.HasProperty("_AlphaClip")) mat.SetFloat("_AlphaClip", 1f);
+            if (mat.HasProperty("_Cutoff")) mat.SetFloat("_Cutoff", 0.5f);
+            mat.EnableKeyword("_ALPHATEST_ON");
+            mat.SetOverrideTag("RenderType", "TransparentCutout");
+            // Cutout is opaque queue (AlphaTest) — writes depth, no blending.
+            mat.renderQueue = (int)RenderQueue.AlphaTest;
+
+            // Render both sides so you see leaves from inside the canopy.
+            if (mat.HasProperty("_Cull")) mat.SetInt("_Cull", (int)CullMode.Off);
+        }
+
         public Material GetMaterial(BlockData data)
-            => data != null && data.IsTransparent ? TransparentAtlasMaterial : AtlasMaterial;
+        {
+            if (data == null) return AtlasMaterial;
+            if (data.IsCutout) return CutoutMaterial;
+            if (data.IsTransparent) return TransparentAtlasMaterial;
+            return AtlasMaterial;
+        }
     }
 }

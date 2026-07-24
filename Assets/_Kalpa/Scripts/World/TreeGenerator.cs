@@ -1,8 +1,15 @@
 // ============================================================================
-// TreeGenerator.cs  (Phase 10 — biome-aware density)
+// TreeGenerator.cs  (Phase 11 hotfix — self-contained trees, no cross-chunk spill)
 // ----------------------------------------------------------------------------
-// Tree placement now queries the TerrainGenerator for per-column biome density,
-// so deserts stay bare, plains are sparse, and forests are dense — automatically.
+// FIX for "floating leaves in the sky":
+//   Previously a tree's canopy could spill into neighbouring chunks. With
+//   streaming, the trunk's chunk and the canopy's chunk can load/unload
+//   independently — so you'd see leaves floating with no visible trunk.
+//
+//   Now every block a tree places (trunk + canopy) is CLAMPED to the tree's
+//   own chunk. Trunk and canopy therefore always load/unload together →
+//   floating leaves are impossible. Trees near a chunk edge get a slightly
+//   trimmed canopy on the border side, which is visually unnoticeable.
 // ============================================================================
 
 using Kalpa.Blocks;
@@ -18,12 +25,12 @@ namespace Kalpa.World
         private readonly byte grassId;
         private readonly int seed;
         private readonly Settings settings;
-        private readonly TerrainGenerator terrain; // for biome density lookup
+        private readonly TerrainGenerator terrain;
 
         [System.Serializable]
         public struct Settings
         {
-            public float Density;       // global multiplier (biome density is multiplied by this)
+            public float Density;
             public int MinTrunkHeight;
             public int MaxTrunkHeight;
             public int CanopyRadius;
@@ -57,20 +64,18 @@ namespace Kalpa.World
                 int wx = originX + lx;
                 int wz = originZ + lz;
 
-                // Per-biome density × global multiplier.
                 float biomeDensity = terrain != null ? terrain.GetTreeDensityAt(wx, wz) : 0.1f;
-                float density = biomeDensity * settings.Density * 10f; // scale to usable range
+                float density = biomeDensity * settings.Density * 10f;
                 if (density <= 0f) continue;
 
                 if (!ShouldPlaceTree(wx, wz, density)) continue;
 
                 int surfaceY = FindSurface(chunk, lx, lz);
                 if (surfaceY < 0) continue;
-
-                // Trees only grow on grass.
                 if (chunk.GetBlockLocal(lx, surfaceY, lz) != grassId) continue;
 
-                PlaceTree(world, wx, surfaceY + 1, wz);
+                // Pass LOCAL coords so the whole tree stays inside this chunk.
+                PlaceTreeLocal(chunk, lx, surfaceY + 1, lz);
             }
         }
 
@@ -107,17 +112,26 @@ namespace Kalpa.World
             return -1;
         }
 
-        private void PlaceTree(VoxelWorld world, int baseX, int baseY, int baseZ)
+        // --------------------------------------------------------------------
+        // Self-contained tree — writes ONLY into this chunk's local space.
+        // Any block that would fall outside [0,Size) on X/Z is simply skipped.
+        // --------------------------------------------------------------------
+
+        private void PlaceTreeLocal(Chunk chunk, int lx, int baseY, int lz)
         {
-            uint h = Hash((uint)baseX, (uint)baseZ, (uint)(seed + 999));
+            int worldX = chunk.Coordinate.WorldOriginX + lx;
+            int worldZ = chunk.Coordinate.WorldOriginZ + lz;
+
+            uint h = Hash((uint)worldX, (uint)worldZ, (uint)(seed + 999));
             int range = Mathf.Max(1, settings.MaxTrunkHeight - settings.MinTrunkHeight + 1);
             int trunkHeight = settings.MinTrunkHeight + (int)(h % (uint)range);
 
+            // Trunk (always inside the chunk on X/Z).
             for (int i = 0; i < trunkHeight; i++)
             {
                 int y = baseY + i;
                 if (y >= GameConstants.ChunkHeight) break;
-                world.SetBlock(baseX, y, baseZ, logId);
+                chunk.SetBlockLocal(lx, y, lz, logId);
             }
 
             int topY = baseY + trunkHeight - 1;
@@ -134,14 +148,22 @@ namespace Kalpa.World
                 {
                     if (Mathf.Abs(dx) == layerRadius && Mathf.Abs(dz) == layerRadius)
                     {
-                        uint ch = Hash((uint)(baseX + dx), (uint)(baseZ + dz), (uint)(seed + dy + 7));
+                        uint ch = Hash((uint)(worldX + dx), (uint)(worldZ + dz), (uint)(seed + dy + 7));
                         if ((ch & 1) == 0) continue;
                     }
 
-                    int wx = baseX + dx, wy = cy, wz = baseZ + dz;
-                    if (dx == 0 && dz == 0 && wy <= topY) continue;
-                    if (world.GetBlock(wx, wy, wz) == GameConstants.AirBlockId)
-                        world.SetBlock(wx, wy, wz, leavesId);
+                    int nlx = lx + dx;
+                    int nlz = lz + dz;
+
+                    // CLAMP to own chunk — skip anything that would spill over the border.
+                    if (nlx < 0 || nlx >= GameConstants.ChunkSize) continue;
+                    if (nlz < 0 || nlz >= GameConstants.ChunkSize) continue;
+
+                    // Don't overwrite the trunk column top.
+                    if (dx == 0 && dz == 0 && cy <= topY) continue;
+
+                    if (chunk.GetBlockLocal(nlx, cy, nlz) == GameConstants.AirBlockId)
+                        chunk.SetBlockLocal(nlx, cy, nlz, leavesId);
                 }
             }
         }

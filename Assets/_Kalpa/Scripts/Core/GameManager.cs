@@ -1,11 +1,11 @@
 // ============================================================================
-// GameManager.cs  (Phase 5A update — atlas support)
+// GameManager.cs  (Phase 11 — builds cutout leaf material)
 // ----------------------------------------------------------------------------
-// Now also owns BlockTextureAtlas. Boot order matters:
-//   1. BlockRegistry loads BlockData assets (with their textures).
-//   2. VoxelWorld created.
-//   3. BlockTextureAtlas built from registry.
-//   4. BlockMaterialCache builds an atlas-material using the atlas texture.
+// Boot order:
+//   1. BlockRegistry
+//   2. VoxelWorld
+//   3. BlockTextureAtlas (opaque + transparent share this)
+//   4. Generate leaf cutout texture → BlockMaterialCache builds all 3 materials
 // ============================================================================
 
 using Kalpa.Blocks;
@@ -14,44 +14,29 @@ using UnityEngine;
 
 namespace Kalpa.Core
 {
-    /// <summary>
-    /// Top-level game controller. Placed once per gameplay scene.
-    /// </summary>
     [DefaultExecutionOrder(-1000)]
     public sealed class GameManager : MonoBehaviour
     {
-        // --------------------------------------------------------------------
-        // Singleton
-        // --------------------------------------------------------------------
-
         public static GameManager Instance { get; private set; }
-
-        // --------------------------------------------------------------------
-        // Systems
-        // --------------------------------------------------------------------
 
         public BlockRegistry      BlockRegistry { get; private set; }
         public VoxelWorld         World         { get; private set; }
         public BlockMaterialCache MaterialCache { get; private set; }
         public BlockTextureAtlas  TextureAtlas  { get; private set; }
 
-        // --------------------------------------------------------------------
-        // Inspector
-        // --------------------------------------------------------------------
-
         [Header("Startup")]
         [SerializeField] private bool verboseLogging = true;
         [SerializeField] private bool dontDestroyOnLoad = true;
 
-        // --------------------------------------------------------------------
-        // Unity lifecycle
-        // --------------------------------------------------------------------
+        [Header("Foliage")]
+        [Tooltip("Seed for the procedurally-generated leaf cutout texture.")]
+        [SerializeField] private int leafTextureSeed = 1337;
 
         private void Awake()
         {
             if (Instance != null && Instance != this)
             {
-                Debug.LogWarning("[GameManager] Duplicate instance detected — destroying self.");
+                Debug.LogWarning("[GameManager] Duplicate instance — destroying self.");
                 Destroy(gameObject);
                 return;
             }
@@ -66,10 +51,6 @@ namespace Kalpa.Core
         {
             if (Instance == this) Instance = null;
         }
-
-        // --------------------------------------------------------------------
-        // Bootstrap
-        // --------------------------------------------------------------------
 
         private void InitialiseSystems()
         {
@@ -88,14 +69,14 @@ namespace Kalpa.Core
 
             MaterialCache = new BlockMaterialCache();
             MaterialCache.BuildAtlasMaterial(TextureAtlas.Atlas);
-            Log("BlockMaterialCache ready.");
+
+            // Generate leaf cutout texture + build the cutout material.
+            var leafTex = LeafTextureGenerator.Generate(64, leafTextureSeed);
+            MaterialCache.BuildCutoutMaterial(leafTex);
+            Log("BlockMaterialCache ready (opaque + transparent + cutout).");
 
             Log("Boot complete.");
         }
-
-        // --------------------------------------------------------------------
-        // Logging
-        // --------------------------------------------------------------------
 
         private void Log(string message)
         {

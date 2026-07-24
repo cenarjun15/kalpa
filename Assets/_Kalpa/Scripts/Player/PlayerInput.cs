@@ -1,8 +1,9 @@
 // ============================================================================
-// PlayerInput.cs  (Phase 10 — scroll-wheel hotbar)
+// PlayerInput.cs  (Phase 12d — auto re-lock cursor when a menu closes)
 // ----------------------------------------------------------------------------
-// Adds HotbarScroll: +1 / -1 when the mouse wheel moves, so the player can
-// cycle hotbar slots with the wheel in addition to number keys.
+// FIX: previously, after closing the BlockPicker/PauseMenu you had to click the
+// screen before mouse-look resumed. Now the cursor re-locks automatically the
+// frame a menu closes, so look control returns immediately.
 // ============================================================================
 
 using Kalpa.UI;
@@ -22,8 +23,8 @@ namespace Kalpa.Player
             public float MouseDeltaY;
             public bool  BreakPressed;
             public bool  PlacePressed;
-            public int   HotbarSelection; // 1..N direct select, 0 = none
-            public int   HotbarScroll;    // -1, 0, +1
+            public int   HotbarSelection;
+            public int   HotbarScroll;
         }
 
         public InputState State { get; private set; }
@@ -32,22 +33,35 @@ namespace Kalpa.Player
         [SerializeField] private bool autoLockOnClick = true;
 
         private bool cursorLocked;
+        private bool wasMenuOpen;         // tracks menu state across frames
         private PauseMenu pauseMenu;
+        private BlockPicker blockPicker;
 
         private void Start()
         {
             pauseMenu = Object.FindFirstObjectByType<PauseMenu>();
+            blockPicker = Object.FindFirstObjectByType<BlockPicker>();
             SetCursorLocked(true);
         }
 
         private void Update()
         {
-            bool paused = pauseMenu != null && pauseMenu.IsOpen;
-            if (paused)
+            bool menuOpen = (pauseMenu != null && pauseMenu.IsOpen)
+                         || (blockPicker != null && blockPicker.IsOpen);
+
+            if (menuOpen)
             {
+                wasMenuOpen = true;
                 cursorLocked = false;
                 State = default;
                 return;
+            }
+
+            // A menu JUST closed this frame → re-lock immediately so look works.
+            if (wasMenuOpen)
+            {
+                wasMenuOpen = false;
+                SetCursorLocked(true);
             }
 
             HandleCursorLock();
@@ -77,8 +91,8 @@ namespace Kalpa.Player
         private int ReadScroll()
         {
             float scroll = Input.GetAxisRaw("Mouse ScrollWheel");
-            if (scroll > 0.01f) return -1; // wheel up → previous slot
-            if (scroll < -0.01f) return 1; // wheel down → next slot
+            if (scroll > 0.01f) return -1;
+            if (scroll < -0.01f) return 1;
             return 0;
         }
 
