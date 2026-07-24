@@ -1,11 +1,24 @@
 // ============================================================================
-// ChunkManager.cs  (Phase 5A update — passes atlas into ChunkRenderer)
+// ChunkManager.cs  (Phase 8 — streaming world)
 // ----------------------------------------------------------------------------
-// Same responsibilities as Phase 4A, plus: hands the atlas to each renderer.
+// No longer generates a fixed grid. Instead:
+//   * Reads/creates a lightweight header (seed + player pose).
+//   * Force-loads a small area around spawn synchronously so the player has
+//     ground beneath them immediately.
+//   * Hands ongoing load/unload to ChunkStreamer, ticked every frame.
+//   * Creates/destroys ChunkRenderers in response to ChunkAdded / ChunkRemoved.
+//   * Rebuilds a chunk's neighbours when it loads so border faces cull correctly.
+//
+// Persistence for streaming worlds:
+//   * header.json  — seed + player pose (written by SaveWorld()).
+//   * region/*.chunk — individual modified chunks (written by the streamer).
+//   The Phase 4 monolithic chunks.bin is NOT used for streaming worlds.
 // ============================================================================
 
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
+using System.Text;
 using Kalpa.Core;
 using Kalpa.SaveSystem;
 using Kalpa.Utils;
@@ -15,123 +28,285 @@ namespace Kalpa.World
 {
     public sealed class ChunkManager : MonoBehaviour
     {
-        [Header("World Setup")]
+        [Header("Streaming")]
+        [SerializeField, Range(2, 10)] private int loadRadius = 5;
+        [SerializeField, Range(3, 14)] private int unloadRadius = 7;
+        [SerializeField, Range(1, 8)]  private int opsPerFrame = 2;
+        [SerializeField, Range(1, 4)]  private int spawnPreloadRadius = 2;
 
-        [SerializeField, Range(1, 8)] private int worldRadiusChunks = 3;
+        [Header("World defaults (if no WorldSession present)")]
         [SerializeField] private int fallbackSeed = 42;
         [SerializeField] private string fallbackWorldName = "MyWorld";
+
+        [Header("Trees")]
+        [SerializeField] private bool generateTrees = true;
+        [SerializeField, Range(0f, 1f)] private float treeDensity = 0.12f;
+        [SerializeField, Range(3, 8)] private int treeMinHeight = 4;
+        [SerializeField, Range(4, 12)] private int treeMaxHeight = 6;
+        [SerializeField, Range(1, 4)] private int treeCanopyRadius = 2;
+
+        // --------------------------------------------------------------------
+        // Runtime
+        // --------------------------------------------------------------------
 
         private readonly ChunkMeshBuilder meshBuilder = new ChunkMeshBuilder();
         private readonly Dictionary<ChunkCoordinate, ChunkRenderer> renderers
             = new Dictionary<ChunkCoordinate, ChunkRenderer>();
 
         private VoxelWorld world;
+        private ChunkStreamer streamer;
+        private ChunkStore store;
+        private string worldName;
+        private int seed;
+        private bool ready;
 
-        private void Start()
-        {
-            StartCoroutine(BootstrapWorld());
-        }
+        // --------------------------------------------------------------------
+        // Unity lifecycle
+        // --------------------------------------------------------------------
+
+        private void Start() => StartCoroutine(BootstrapWorld());
 
         private void OnDestroy()
         {
-            if (world != null) world.ChunkAdded -= OnChunkAdded;
+            if (world != null)
+            {
+                world.ChunkAdded -= OnChunkAdded;
+                world.ChunkRemoved -= OnChunkRemoved;
+            }
         }
+
+        private void Update()
+        {
+            if (ready) streamer.Tick();
+        }
+
+        // --------------------------------------------------------------------
+        // Bootstrap
+        // --------------------------------------------------------------------
 
         private IEnumerator BootstrapWorld()
         {
             yield return null;
 
             var gm = GameManager.Instance;
-            if (gm == null)
-            {
-                Debug.LogError("[ChunkManager] No GameManager in scene!");
-                yield break;
-            }
+            if (gm == null) { Debug.LogError("[ChunkManager] No GameManager!"); yield break; }
             if (gm.BlockRegistry.Count == 0)
             {
-                Debug.LogError("[ChunkManager] BlockRegistry is empty — no BlockData assets found.");
+                Debug.LogError("[ChunkManager] BlockRegistry empty — no BlockData assets.");
                 yield break;
             }
 
             world = gm.World;
             world.ChunkAdded += OnChunkAdded;
+            world.ChunkRemoved += OnChunkRemoved;
 
+            // Resolve session.
             var session = WorldSession.Instance;
-            string worldName;
-            int seed;
+            worldName = session != null ? session.WorldName : fallbackWorldName;
+            seed      = session != null ? session.Seed : fallbackSeed;
 
-            if (session != null)
+            // Load header (seed + player pose) if it exists.
+            var header = LoadHeader(worldName);
+            bool loaded = header != null;
+            if (loaded)
             {
-                worldName = session.WorldName;
-                seed = session.Seed;
+                seed = header.Seed;
+                if (session != null) session.BeginLoadedWorld(header);
             }
-            else
+            else if (session != null)
             {
-                worldName = fallbackWorldName;
-                seed = fallbackSeed;
-                Debug.LogWarning("[ChunkManager] No WorldSession in scene; using inspector fallbacks.");
+                session.BeginNewWorld(worldName, seed);
             }
 
-            bool loadSucceeded = false;
-            WorldSaveHeader loadedHeader = null;
+            // Build generators + store + streamer.
+            store = new ChunkStore(worldName);
 
-            if (WorldSaveIO.WorldExists(worldName))
+            var terrain = new TerrainGenerator(seed, gm.BlockRegistry);
+            TreeGenerator trees = null;
+            if (generateTrees)
             {
-                Debug.Log($"[ChunkManager] Loading saved world '{worldName}'…");
-                try
+                trees = new TreeGenerator(seed, gm.BlockRegistry, new TreeGenerator.Settings
                 {
-                    loadedHeader = WorldSaveIO.Load(worldName, world);
-                    loadSucceeded = true;
-                }
-                catch (System.Exception e)
-                {
-                    Debug.LogError($"[ChunkManager] Load failed: {e.Message}. Generating fresh world instead.");
-                    loadSucceeded = false;
-                }
+                    Density = treeDensity,
+                    MinTrunkHeight = treeMinHeight,
+                    MaxTrunkHeight = Mathf.Max(treeMinHeight, treeMaxHeight),
+                    CanopyRadius = treeCanopyRadius,
+                });
             }
 
-            if (loadSucceeded)
-            {
-                if (session != null) session.BeginLoadedWorld(loadedHeader);
-                foreach (var kv in renderers) kv.Value.Rebuild();
-                ApplyPlayerPose(loadedHeader);
-            }
-            else
-            {
-                yield return GenerateFreshWorld(gm, seed);
-            }
+            var player = Object.FindFirstObjectByType<Player.PlayerController>();
+            Transform playerTf = player != null ? player.transform : null;
 
-            Debug.Log($"[ChunkManager] World ready — {world.ChunkCount} chunks in world.");
+            streamer = new ChunkStreamer(world, terrain, trees, store, playerTf)
+            {
+                LoadRadius = loadRadius,
+                UnloadRadius = unloadRadius,
+                OpsPerFrame = opsPerFrame,
+            };
+
+            // Position player before preloading so spawn area centres on them.
+            if (player != null && loaded)
+                ApplyPlayerPose(player, header);
+
+            // Force-load spawn area synchronously so the player lands on solid ground.
+            PreloadSpawn(playerTf);
+
+            ready = true;
+            Debug.Log($"[ChunkManager] Streaming ready — world '{worldName}', seed {seed}, " +
+                      $"{world.ChunkCount} chunks preloaded.");
         }
 
-        private IEnumerator GenerateFreshWorld(GameManager gm, int seed)
-        {
-            var terrain = new TerrainGenerator(seed, gm.BlockRegistry);
+        // --------------------------------------------------------------------
+        // Spawn preload — load a small area immediately (no frame budget).
+        // --------------------------------------------------------------------
 
-            for (int cx = -worldRadiusChunks; cx <= worldRadiusChunks; cx++)
-            for (int cz = -worldRadiusChunks; cz <= worldRadiusChunks; cz++)
+        private void PreloadSpawn(Transform playerTf)
+        {
+            int cx = 0, cz = 0;
+            if (playerTf != null)
             {
-                var coord = new ChunkCoordinate(cx, cz);
-                var chunk = new Chunk(coord);
-                terrain.Generate(chunk);
+                cx = Mathf.FloorToInt(playerTf.position.x / GameConstants.ChunkSize);
+                cz = Mathf.FloorToInt(playerTf.position.z / GameConstants.ChunkSize);
+            }
+
+            var gm = GameManager.Instance;
+            var terrain = new TerrainGenerator(seed, gm.BlockRegistry);
+            TreeGenerator trees = null;
+            if (generateTrees)
+                trees = new TreeGenerator(seed, gm.BlockRegistry, new TreeGenerator.Settings
+                {
+                    Density = treeDensity,
+                    MinTrunkHeight = treeMinHeight,
+                    MaxTrunkHeight = Mathf.Max(treeMinHeight, treeMaxHeight),
+                    CanopyRadius = treeCanopyRadius,
+                });
+
+            for (int dx = -spawnPreloadRadius; dx <= spawnPreloadRadius; dx++)
+            for (int dz = -spawnPreloadRadius; dz <= spawnPreloadRadius; dz++)
+            {
+                var coord = new ChunkCoordinate(cx + dx, cz + dz);
+                if (world.HasChunk(coord)) continue;
+
+                Chunk chunk = (store != null && store.Exists(coord))
+                    ? store.Load(coord)
+                    : null;
+
+                if (chunk == null)
+                {
+                    chunk = new Chunk(coord);
+                    terrain.Generate(chunk);
+                    trees?.Generate(chunk, world);
+                }
                 world.AddChunk(chunk);
             }
 
-            yield return null;
-
+            // Rebuild all preloaded renderers now.
             foreach (var kv in renderers) kv.Value.Rebuild();
         }
 
-        private void ApplyPlayerPose(WorldSaveHeader header)
+        // --------------------------------------------------------------------
+        // Renderer lifecycle
+        // --------------------------------------------------------------------
+
+        private void OnChunkAdded(Chunk chunk)
         {
-            var pc = Object.FindFirstObjectByType<Player.PlayerController>();
-            if (pc == null) return;
+            if (!renderers.ContainsKey(chunk.Coordinate))
+            {
+                var go = new GameObject();
+                go.transform.SetParent(transform, false);
+                var renderer = go.AddComponent<ChunkRenderer>();
+                var gm = GameManager.Instance;
+                renderer.Initialise(chunk, world, gm.BlockRegistry, gm.MaterialCache,
+                                    meshBuilder, gm.TextureAtlas);
+                renderers[chunk.Coordinate] = renderer;
+            }
 
+            // Rebuild this chunk + neighbours (so border faces cull correctly).
+            if (ready)
+            {
+                RebuildAt(chunk.Coordinate);
+                RebuildAt(new ChunkCoordinate(chunk.Coordinate.X + 1, chunk.Coordinate.Z));
+                RebuildAt(new ChunkCoordinate(chunk.Coordinate.X - 1, chunk.Coordinate.Z));
+                RebuildAt(new ChunkCoordinate(chunk.Coordinate.X, chunk.Coordinate.Z + 1));
+                RebuildAt(new ChunkCoordinate(chunk.Coordinate.X, chunk.Coordinate.Z - 1));
+            }
+        }
+
+        private void OnChunkRemoved(Chunk chunk)
+        {
+            if (renderers.TryGetValue(chunk.Coordinate, out var renderer))
+            {
+                renderers.Remove(chunk.Coordinate);
+                if (renderer != null) Destroy(renderer.gameObject);
+            }
+        }
+
+        private void RebuildAt(ChunkCoordinate coord)
+        {
+            if (renderers.TryGetValue(coord, out var r) && r != null)
+                r.Rebuild();
+        }
+
+        // --------------------------------------------------------------------
+        // Public: chunk rebuild used by PlayerController when editing blocks
+        // --------------------------------------------------------------------
+
+        public ChunkRenderer GetRenderer(ChunkCoordinate coord)
+            => renderers.TryGetValue(coord, out var r) ? r : null;
+
+        public int RendererCount => renderers.Count;
+
+        // --------------------------------------------------------------------
+        // Save / header IO (lightweight — seed + player pose only)
+        // --------------------------------------------------------------------
+
+        /// <summary>Save modified chunks + header. Called by WorldSession.</summary>
+        public void SaveWorld(Vector3 playerPos, float yaw, float pitch)
+        {
+            if (!ready) return;
+
+            streamer.SaveAllModified();
+            SaveHeader(playerPos, yaw, pitch);
+            Debug.Log($"[ChunkManager] Streaming world '{worldName}' saved.");
+        }
+
+        private void SaveHeader(Vector3 playerPos, float yaw, float pitch)
+        {
+            var header = new WorldSaveHeader
+            {
+                FormatVersion = GameConstants.SaveFormatVersion,
+                GameVersion = GameConstants.GameVersion,
+                WorldName = worldName,
+                Seed = seed,
+                LastSavedUtc = System.DateTime.UtcNow.ToString("o"),
+                PlayerX = playerPos.x,
+                PlayerY = playerPos.y,
+                PlayerZ = playerPos.z,
+                PlayerYaw = yaw,
+                PlayerPitch = pitch,
+            };
+
+            var path = WorldSaveIO.HeaderPath(worldName);
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            File.WriteAllText(path, JsonUtility.ToJson(header, true), Encoding.UTF8);
+        }
+
+        private static WorldSaveHeader LoadHeader(string worldName)
+        {
+            var path = WorldSaveIO.HeaderPath(worldName);
+            if (!File.Exists(path)) return null;
+            try
+            {
+                return JsonUtility.FromJson<WorldSaveHeader>(File.ReadAllText(path, Encoding.UTF8));
+            }
+            catch { return null; }
+        }
+
+        private void ApplyPlayerPose(Player.PlayerController pc, WorldSaveHeader header)
+        {
             pc.transform.position = new Vector3(header.PlayerX, header.PlayerY, header.PlayerZ);
-
             var e = pc.transform.eulerAngles;
             pc.transform.eulerAngles = new Vector3(e.x, header.PlayerYaw, e.z);
-
             var cam = pc.GetComponentInChildren<Camera>();
             if (cam != null)
             {
@@ -139,25 +314,5 @@ namespace Kalpa.World
                 cam.transform.localEulerAngles = new Vector3(header.PlayerPitch, lr.y, lr.z);
             }
         }
-
-        private void OnChunkAdded(Chunk chunk)
-        {
-            if (renderers.ContainsKey(chunk.Coordinate)) return;
-
-            var go = new GameObject();
-            go.transform.SetParent(transform, false);
-
-            var renderer = go.AddComponent<ChunkRenderer>();
-            var gm = GameManager.Instance;
-            renderer.Initialise(chunk, world, gm.BlockRegistry, gm.MaterialCache,
-                                meshBuilder, gm.TextureAtlas);
-
-            renderers[chunk.Coordinate] = renderer;
-        }
-
-        public ChunkRenderer GetRenderer(ChunkCoordinate coord)
-            => renderers.TryGetValue(coord, out var r) ? r : null;
-
-        public int RendererCount => renderers.Count;
     }
 }

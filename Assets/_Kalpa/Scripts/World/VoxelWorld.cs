@@ -1,9 +1,11 @@
 // ============================================================================
-// VoxelWorld.cs  (Phase 2 — chunk-based storage)
+// VoxelWorld.cs  (Phase 8 update — chunk removal + modification flagging)
 // ----------------------------------------------------------------------------
-// Replaces the Phase 1 dictionary-of-blocks with a dictionary-of-chunks.
-// Public API is unchanged (GetBlock / SetBlock / BlockChanged), so all Phase 1
-// callers keep working. Internal storage is now chunk-based for scalability.
+// Adds:
+//   * RemoveChunk + ChunkRemoved event (so the streamer can unload chunks and
+//     the renderer can destroy the matching GameObject).
+//   * SetBlock now flags the owning chunk as IsModified, so edits survive
+//     unload/reload.
 // ============================================================================
 
 using System;
@@ -23,11 +25,9 @@ namespace Kalpa.World
         // Events
         // --------------------------------------------------------------------
 
-        /// <summary>Fired whenever a block is set, replaced, or removed.</summary>
         public event Action<BlockPosition, byte, byte> BlockChanged;
-
-        /// <summary>Fired when a new chunk is added to the world.</summary>
         public event Action<Chunk> ChunkAdded;
+        public event Action<Chunk> ChunkRemoved;
 
         // --------------------------------------------------------------------
         // Storage
@@ -38,10 +38,6 @@ namespace Kalpa.World
 
         private readonly BlockRegistry registry;
 
-        // --------------------------------------------------------------------
-        // Construction
-        // --------------------------------------------------------------------
-
         public VoxelWorld(BlockRegistry registry)
         {
             this.registry = registry ?? throw new ArgumentNullException(nameof(registry));
@@ -51,7 +47,6 @@ namespace Kalpa.World
         // Chunk management
         // --------------------------------------------------------------------
 
-        /// <summary>Add a fully-populated chunk to the world.</summary>
         public void AddChunk(Chunk chunk)
         {
             if (chunk == null) throw new ArgumentNullException(nameof(chunk));
@@ -59,27 +54,29 @@ namespace Kalpa.World
             ChunkAdded?.Invoke(chunk);
         }
 
-        /// <summary>Get a chunk by coordinate. Returns null if not loaded.</summary>
+        /// <summary>Remove a chunk from the world. Fires ChunkRemoved.</summary>
+        public void RemoveChunk(ChunkCoordinate coord)
+        {
+            if (chunks.TryGetValue(coord, out var chunk))
+            {
+                chunks.Remove(coord);
+                ChunkRemoved?.Invoke(chunk);
+            }
+        }
+
         public Chunk GetChunk(ChunkCoordinate coord)
             => chunks.TryGetValue(coord, out var c) ? c : null;
 
-        /// <summary>True if a chunk at the given coordinate is loaded.</summary>
         public bool HasChunk(ChunkCoordinate coord) => chunks.ContainsKey(coord);
 
-        /// <summary>Enumerate all loaded chunks.</summary>
         public IEnumerable<Chunk> AllChunks => chunks.Values;
 
-        /// <summary>Total loaded chunk count.</summary>
         public int ChunkCount => chunks.Count;
 
         // --------------------------------------------------------------------
         // Block-level access (world coordinates)
         // --------------------------------------------------------------------
 
-        /// <summary>
-        /// Get the block at a world position. Returns AIR for unloaded areas
-        /// or out-of-height positions.
-        /// </summary>
         public byte GetBlock(int worldX, int y, int worldZ)
         {
             if ((uint)y >= GameConstants.ChunkHeight) return GameConstants.AirBlockId;
@@ -95,11 +92,6 @@ namespace Kalpa.World
 
         public byte GetBlock(BlockPosition pos) => GetBlock(pos.X, pos.Y, pos.Z);
 
-        /// <summary>
-        /// Set a block at a world position.
-        /// Silently ignores writes to unloaded chunks or out-of-height Y.
-        /// Fires BlockChanged if the ID actually changed.
-        /// </summary>
         public void SetBlock(int worldX, int y, int worldZ, byte newId)
         {
             if ((uint)y >= GameConstants.ChunkHeight) return;
@@ -115,6 +107,7 @@ namespace Kalpa.World
             byte oldId = chunk.SetBlockLocal(localX, y, localZ, newId);
             if (oldId != newId)
             {
+                chunk.IsModified = true; // player-edit → persist before unload
                 BlockChanged?.Invoke(new BlockPosition(worldX, y, worldZ), oldId, newId);
             }
         }

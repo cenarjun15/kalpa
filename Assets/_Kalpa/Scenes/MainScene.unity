@@ -119,6 +119,67 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
+--- !u!1 &406673472
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 406673474}
+  - component: {fileID: 406673473}
+  m_Layer: 0
+  m_Name: DayNightCycle
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &406673473
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 406673472}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 78c5017bf2605d44c9091d5e3997a2df, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Kalpa.World.DayNightCycle
+  dayLengthSeconds: 600
+  startTime01: 0.3
+  freezeTime: 0
+  fastForwardKey: 116
+  showClock: 1
+  enableFog: 1
+  fogStart: 40
+  fogEnd: 110
+  skyMidnight: {r: 0.03, g: 0.04, b: 0.09, a: 1}
+  skyDawnDusk: {r: 0.85, g: 0.5, b: 0.35, a: 1}
+  skyNoon: {r: 0.53, g: 0.75, b: 0.92, a: 1}
+  sunDay: {r: 1, g: 0.96, b: 0.86, a: 1}
+  sunDawnDusk: {r: 1, g: 0.7, b: 0.45, a: 1}
+  sunMaxIntensity: 1.25
+  moonMinIntensity: 0.06
+  ambientDay: 0.55
+  ambientNight: 0.1
+--- !u!4 &406673474
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 406673472}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -14.78599, y: 0, z: 26.33947}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &529675337
 GameObject:
   m_ObjectHideFlags: 0
@@ -674,63 +735,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &1360185334
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1360185336}
-  - component: {fileID: 1360185335}
-  m_Layer: 0
-  m_Name: SkyController
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &1360185335
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1360185334}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: fbabf98e9508dac41ac605028efe1c44, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Kalpa.World.SkyController
-  skyColor: {r: 0.53, g: 0.75, b: 0.92, a: 1}
-  syncFogWithSky: 1
-  enableFog: 1
-  fogMode: 1
-  fogColor: {r: 0.53, g: 0.75, b: 0.92, a: 1}
-  fogStart: 32
-  fogEnd: 96
-  ambientColor: {r: 0.55, g: 0.55, b: 0.58, a: 1}
-  ambientIntensity: 0.55
-  sunLight: {fileID: 0}
-  sunColor: {r: 1, g: 0.96, b: 0.86, a: 1}
-  sunIntensity: 1.2
-  sunRotationEuler: {x: 45, y: 30, z: 0}
---- !u!4 &1360185336
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1360185334}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -14.78601, y: -0, z: 26.33947}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1521354395
 GameObject:
   m_ObjectHideFlags: 0
@@ -832,7 +836,7 @@ SceneRoots:
   - {fileID: 995888390}
   - {fileID: 581846796}
   - {fileID: 2041951584}
-  - {fileID: 1360185336}
   - {fileID: 1046066639}
   - {fileID: 645672073}
   - {fileID: 1521354397}
+  - {fileID: 406673474}
