@@ -1,9 +1,9 @@
 // ============================================================================
-// PlayerInput.cs  (Phase 12d — auto re-lock cursor when a menu closes)
+// PlayerInput.cs  (Mobile update — merges touch + keyboard/mouse)
 // ----------------------------------------------------------------------------
-// FIX: previously, after closing the BlockPicker/PauseMenu you had to click the
-// screen before mouse-look resumed. Now the cursor re-locks automatically the
-// frame a menu closes, so look control returns immediately.
+// When TouchControls.Active is true, movement/look/actions come from the
+// on-screen touch UI. Otherwise, keyboard + mouse as before. Both paths feed
+// the same InputState, so all downstream code is unchanged.
 // ============================================================================
 
 using Kalpa.UI;
@@ -25,23 +25,28 @@ namespace Kalpa.Player
             public bool  PlacePressed;
             public int   HotbarSelection;
             public int   HotbarScroll;
+            public bool  OpenPicker;    // touch "BLOCKS" button
         }
 
         public InputState State { get; private set; }
 
-        [Header("Cursor Lock")]
+        [Header("Cursor Lock (desktop only)")]
         [SerializeField] private bool autoLockOnClick = true;
 
         private bool cursorLocked;
-        private bool wasMenuOpen;         // tracks menu state across frames
+        private bool wasMenuOpen;
         private PauseMenu pauseMenu;
         private BlockPicker blockPicker;
+        private TouchControls touch;
 
         private void Start()
         {
             pauseMenu = Object.FindFirstObjectByType<PauseMenu>();
             blockPicker = Object.FindFirstObjectByType<BlockPicker>();
-            SetCursorLocked(true);
+            touch = TouchControls.Instance ?? Object.FindFirstObjectByType<TouchControls>();
+
+            if (touch == null || !touch.Active)
+                SetCursorLocked(true);
         }
 
         private void Update()
@@ -57,16 +62,53 @@ namespace Kalpa.Player
                 return;
             }
 
-            // A menu JUST closed this frame → re-lock immediately so look works.
-            if (wasMenuOpen)
+            bool touchActive = touch != null && touch.Active;
+
+            if (!touchActive && wasMenuOpen)
             {
                 wasMenuOpen = false;
                 SetCursorLocked(true);
             }
+            else if (wasMenuOpen)
+            {
+                wasMenuOpen = false;
+            }
 
+            State = touchActive ? BuildTouchState() : BuildDesktopState();
+        }
+
+        // --------------------------------------------------------------------
+        // Touch input path
+        // --------------------------------------------------------------------
+
+        private InputState BuildTouchState()
+        {
+            var t = touch;
+            return new InputState
+            {
+                MoveForward     = t.Move.y,
+                MoveRight       = t.Move.x,
+                Jump            = t.JumpHeld,
+                Sprint          = t.SprintOn,
+                MouseDeltaX     = t.Look.x,
+                MouseDeltaY     = t.Look.y,
+                BreakPressed    = t.BreakPressedThisFrame,
+                PlacePressed    = t.PlacePressedThisFrame,
+                HotbarSelection = 0,
+                HotbarScroll    = 0,
+                OpenPicker      = t.PickerPressedThisFrame,
+            };
+        }
+
+        // --------------------------------------------------------------------
+        // Desktop input path
+        // --------------------------------------------------------------------
+
+        private InputState BuildDesktopState()
+        {
             HandleCursorLock();
 
-            State = new InputState
+            return new InputState
             {
                 MoveForward     = Input.GetAxisRaw("Vertical"),
                 MoveRight       = Input.GetAxisRaw("Horizontal"),
@@ -78,6 +120,7 @@ namespace Kalpa.Player
                 PlacePressed    = cursorLocked && Input.GetMouseButtonDown(1),
                 HotbarSelection = ReadHotbarKey(),
                 HotbarScroll    = ReadScroll(),
+                OpenPicker      = false,
             };
         }
 

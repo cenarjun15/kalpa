@@ -159,6 +159,13 @@ namespace Kalpa.Player
             if (input == null) return;
             var s = input.State;
 
+            if (s.OpenPicker)
+            {
+                var picker = Object.FindFirstObjectByType<Kalpa.UI.BlockPicker>();
+                // BlockPicker toggles on E; simplest: expose a public Open() — or
+                // just tell users to tap BLOCKS which we wire to the picker toggle.
+            }
+
             HandleLook(s);
             HandleMovement(s);
             HandleFootsteps(s);

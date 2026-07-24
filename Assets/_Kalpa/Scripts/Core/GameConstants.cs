@@ -68,5 +68,13 @@ namespace Kalpa.Core
 
         public const string GameVersion = "0.1.0";
         public const string GameName = "Kalpa";
+
+        // --------------------------------------------------------------------
+        // Attribution / Copyright
+        // --------------------------------------------------------------------
+
+        public const string Author = "cenarjun";
+        public const string Copyright = "© 2026 cenarjun. All rights reserved.";
+        public const string Studio = "cenarjun-studios";   // change to a studio name later if you want
     }
 }

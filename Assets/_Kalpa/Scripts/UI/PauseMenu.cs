@@ -1,8 +1,9 @@
 // ============================================================================
-// PauseMenu.cs  (Phase 5B update — volume sliders)
+// PauseMenu.cs  (clean rebuild — guaranteed Quit button, no emoji, taller panel)
 // ----------------------------------------------------------------------------
-// Adds Master/SFX/Ambient volume sliders. Values live in AudioSystem +
-// PlayerPrefs, so they persist across sessions.
+// ESC toggles the menu. Buttons: Resume, Save, Save & Quit to Menu, Quit Game.
+// Panel is sized to fit all buttons + volume sliders with margin, so nothing
+// gets clipped. No emoji (renders cleanly in builds).
 // ============================================================================
 
 using Kalpa.Audio;
@@ -18,11 +19,10 @@ namespace Kalpa.UI
         [SerializeField] private string mainMenuSceneName = "MainMenu";
 
         [Header("Layout")]
-        [SerializeField] private int panelWidth = 380;
-        [SerializeField] private int panelHeight = 460;
+        [SerializeField] private int panelWidth = 400;
+        [SerializeField] private int panelHeight = 520;
 
         private bool open;
-
         public bool IsOpen => open;
 
         private void Update()
@@ -44,8 +44,9 @@ namespace Kalpa.UI
         {
             if (!open) return;
 
+            // Dark backdrop.
             var prev = GUI.color;
-            GUI.color = new Color(0f, 0f, 0f, 0.55f);
+            GUI.color = new Color(0f, 0f, 0f, 0.6f);
             GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
             GUI.color = prev;
 
@@ -57,44 +58,40 @@ namespace Kalpa.UI
 
             var title = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 22,
-                alignment = TextAnchor.MiddleCenter,
-                fontStyle = FontStyle.Bold,
-                normal = { textColor = Color.white },
+                fontSize = 24, fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white },
             };
-            GUI.Label(new Rect(panel.x, panel.y + 18, panel.width, 32), "Paused", title);
+            GUI.Label(new Rect(panel.x, panel.y + 16, panel.width, 34), "PAUSED", title);
 
-            var contentArea = new Rect(panel.x + 24, panel.y + 66,
-                                       panel.width - 48, panel.height - 84);
-            GUILayout.BeginArea(contentArea);
+            var area = new Rect(panel.x + 28, panel.y + 64, panel.width - 56, panel.height - 84);
+            GUILayout.BeginArea(area);
 
             DrawVolumeSliders();
-            GUILayout.Space(12);
+            GUILayout.Space(16);
 
-            if (GUILayout.Button("▶ Resume", GUILayout.Height(38)))
+            if (GUILayout.Button("Resume", GUILayout.Height(40)))
             {
                 open = false;
                 SetCursor(false);
             }
-            GUILayout.Space(6);
+            GUILayout.Space(8);
 
-            if (GUILayout.Button("💾 Save", GUILayout.Height(38)))
-            {
+            if (GUILayout.Button("Save", GUILayout.Height(40)))
                 WorldSession.Instance?.SaveNow("pause menu");
-            }
-            GUILayout.Space(6);
+            GUILayout.Space(8);
 
-            if (GUILayout.Button("🏠 Save & Quit to Menu", GUILayout.Height(38)))
+            if (GUILayout.Button("Save & Quit to Menu", GUILayout.Height(40)))
             {
                 WorldSession.Instance?.SaveNow("quit to menu");
                 LoadMainMenu();
             }
-            GUILayout.Space(6);
+            GUILayout.Space(8);
 
-            if (GUILayout.Button("✖ Quit to Desktop", GUILayout.Height(38)))
+            // THE EXIT BUTTON.
+            if (GUILayout.Button("Quit Game", GUILayout.Height(40)))
             {
                 WorldSession.Instance?.SaveNow("quit to desktop");
-                Quit();
+                QuitGame();
             }
 
             GUILayout.EndArea();
@@ -108,41 +105,33 @@ namespace Kalpa.UI
             var labelStyle = new GUIStyle(GUI.skin.label)
             {
                 fontSize = 12,
-                normal = { textColor = new Color(0.85f, 0.85f, 0.85f, 1f) },
+                normal = { textColor = new Color(0.85f, 0.85f, 0.85f) },
             };
 
-            float master = audio.MasterVolume;
-            float sfx = audio.SfxVolume;
-            float ambient = audio.AmbientVolume;
-
-            GUILayout.Label($"🔊 Master  ({Mathf.RoundToInt(master * 100)}%)", labelStyle);
-            float newMaster = GUILayout.HorizontalSlider(master, 0f, 1f);
-            if (!Mathf.Approximately(newMaster, master)) audio.SetMasterVolume(newMaster);
+            GUILayout.Label($"Master  ({Mathf.RoundToInt(audio.MasterVolume * 100)}%)", labelStyle);
+            float m = GUILayout.HorizontalSlider(audio.MasterVolume, 0f, 1f);
+            if (!Mathf.Approximately(m, audio.MasterVolume)) audio.SetMasterVolume(m);
 
             GUILayout.Space(4);
-            GUILayout.Label($"💥 SFX  ({Mathf.RoundToInt(sfx * 100)}%)", labelStyle);
-            float newSfx = GUILayout.HorizontalSlider(sfx, 0f, 1f);
-            if (!Mathf.Approximately(newSfx, sfx)) audio.SetSfxVolume(newSfx);
+            GUILayout.Label($"SFX  ({Mathf.RoundToInt(audio.SfxVolume * 100)}%)", labelStyle);
+            float s = GUILayout.HorizontalSlider(audio.SfxVolume, 0f, 1f);
+            if (!Mathf.Approximately(s, audio.SfxVolume)) audio.SetSfxVolume(s);
 
             GUILayout.Space(4);
-            GUILayout.Label($"🌬 Ambient  ({Mathf.RoundToInt(ambient * 100)}%)", labelStyle);
-            float newAmbient = GUILayout.HorizontalSlider(ambient, 0f, 1f);
-            if (!Mathf.Approximately(newAmbient, ambient)) audio.SetAmbientVolume(newAmbient);
+            GUILayout.Label($"Ambient  ({Mathf.RoundToInt(audio.AmbientVolume * 100)}%)", labelStyle);
+            float a = GUILayout.HorizontalSlider(audio.AmbientVolume, 0f, 1f);
+            if (!Mathf.Approximately(a, audio.AmbientVolume)) audio.SetAmbientVolume(a);
         }
 
         private void LoadMainMenu()
         {
             if (Application.CanStreamedLevelBeLoaded(mainMenuSceneName))
-            {
                 SceneManager.LoadScene(mainMenuSceneName);
-            }
             else
-            {
-                Debug.LogError($"[PauseMenu] Scene '{mainMenuSceneName}' is not in Build Settings!");
-            }
+                Debug.LogError($"[PauseMenu] Scene '{mainMenuSceneName}' not in Build Settings!");
         }
 
-        private static void Quit()
+        private static void QuitGame()
         {
 #if UNITY_EDITOR
             UnityEditor.EditorApplication.isPlaying = false;
